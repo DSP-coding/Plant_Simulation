@@ -94,6 +94,23 @@ with st.sidebar:
     target_lead_days = {cfg.Route.THERMO: target_lead_thermo, cfg.Route.CUT_AND_CLASH: target_lead_cutclash}
 
     st.divider()
+    st.header("Area capacities (m² / month)")
+    st.caption("Capacity of each area AT IDEAL STAFFING, on a fixed reference schedule "
+               f"({cfg.REFERENCE_HOURS_PER_WEEK:.0f} hrs/week) - independent of the actual shift "
+               "schedule you set below. Defaults are back-calculated guesses; edit any of these "
+               "with a real number and the simulation recalculates from it.")
+    station_capacity_m2_per_month = {}
+    # Flow order matching how the factory actually runs, CNC/Sanding/MB Sander/
+    # Press/Cefla first (the ones you're most likely to have real numbers for).
+    capacity_order = ["cnc_thermo", "sanding", "mb_sander", "press", "edging",
+                       "glue", "despatch", "optimising", "cnc_1536", "eb_drilling"]
+    for sid in capacity_order:
+        default_val = round(cfg.default_station_capacity_m2_per_month(sid), 0)
+        station_capacity_m2_per_month[sid] = st.number_input(
+            f"{station_label(sid)}", min_value=0.0, value=default_val, step=100.0,
+            key=f"cap_{sid}")
+
+    st.divider()
     st.header("Product mix (%)")
     st.caption("Real Thermo(80.6%)/Cut&Clash(19.4%) split from product_2026.xlsx; "
                "the S1/S2/S3 breakdown within Thermo is still a placeholder pending "
@@ -219,6 +236,7 @@ with tab_results:
         settings = SimulationSettings(
             horizon=horizon, intake_m2_for_horizon=intake_m2_for_horizon, mix_pct=mix_pct,
             target_lead_days=target_lead_days, shift_schedules=shift_schedules,
+            station_capacity_m2_per_month=station_capacity_m2_per_month,
             remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
             sick_enabled=sick_enabled, random_seed=int(seed),
         )

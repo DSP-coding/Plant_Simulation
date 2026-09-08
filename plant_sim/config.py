@@ -34,6 +34,16 @@ AVG_PART_M2 = {
 BOARD_M2 = 2.88
 PARTS_PER_BOARD = 8  # BOARD_M2 / ~0.36 avg part m2
 
+WEEKS_PER_MONTH = 4.345
+
+# "Reference" schedule used ONLY to convert an editable "capacity in m2/month
+# at ideal staffing" into the internal per-operator-hour (or per-machine-
+# minute) rate the engine actually runs on - it is NOT the schedule you
+# configure in the sidebar. [ASSUMPTION] carried from the old tool: think of
+# it as "flat out, 2x 10hr shifts x 4 days/week" (80 hrs/week).
+REFERENCE_HOURS_PER_WEEK = 80.0
+REFERENCE_HOURS_PER_MONTH = REFERENCE_HOURS_PER_WEEK * WEEKS_PER_MONTH
+
 
 # ---------------------------------------------------------------------------
 # Product classes and routing
@@ -139,6 +149,45 @@ STATIONS: dict[str, Station] = {
 CNC_SETUP_MIN_PER_BOARD = 3.0
 CNC_UTILISATION = 0.80   # [ASSUMPTION] machine uptime while manned
 
+
+# ---------------------------------------------------------------------------
+# Editable "area capacity" (m2/month at ideal staffing, on the REFERENCE
+# schedule above) - this is the number you actually type in ("CNC = 10,000
+# m2/month"). The functions below convert between that human-facing number
+# and the internal per-operator-hour rate (or, for CNC, a scale factor on
+# cut times) that the simulation engine runs on.
+# ---------------------------------------------------------------------------
+
+CNC_STATION_IDS = ("cnc_thermo", "cnc_1536")
+
+
+def default_cnc_capacity_m2_per_month(route: str) -> float:
+    """What the CNC line on this route would produce per month, running the
+    reference schedule flat out at ideal staffing, cutting the DEFAULT_MIX_PCT
+    blend of its own classes. This is the baseline that a user-entered target
+    capacity is compared against to derive the scale factor in simulation.py.
+    """
+    station = next(s for s in STATIONS.values() if s.id in CNC_STATION_IDS and s.route == route)
+    classes = [c for c, pc in PRODUCT_CLASSES.items() if pc.route == route]
+    total_share = sum(DEFAULT_MIX_PCT[c] for c in classes)
+    weighted_min_per_m2 = sum(
+        (DEFAULT_MIX_PCT[c] / total_share) * (PRODUCT_CLASSES[c].cnc_min_per_board + CNC_SETUP_MIN_PER_BOARD) / BOARD_M2
+        for c in classes
+    )
+    available_minutes_per_month = station.num_machines * REFERENCE_HOURS_PER_MONTH * 60.0 * CNC_UTILISATION
+    return available_minutes_per_month / weighted_min_per_m2
+
+
+def default_station_capacity_m2_per_month(station_id: str) -> float:
+    """The capacity implied by this station's current (guessed) rate constants,
+    at ideal staffing, on the reference schedule - i.e. what capacity number
+    would reproduce today's behaviour unchanged if typed into the UI."""
+    station = STATIONS[station_id]
+    if station_id in CNC_STATION_IDS:
+        return default_cnc_capacity_m2_per_month(station.route)
+    return station.ideal_ops * station.capacity_m2_per_op_hour * REFERENCE_HOURS_PER_MONTH
+
+
 # Ordered station sequence for each route, NOT including "despatch" - Packing/
 # Despatch is a shared merge point fed by both routes' last station, so it is
 # processed once per hour (see simulation.py), not once per route.
@@ -233,7 +282,6 @@ REAL_INTAKE_M2 = {
         "cutclash": {"median": 1403.0, "mean": 1456.0, "p90": 1828.0, "max": 1828.0},
     },
 }
-WEEKS_PER_MONTH = 4.345
 
 # [REAL] target lead time is different per product range - Cut & Clash quotes
 # a 7-day lead time; Thermo's target is still the [ASSUMPTION] 10-day

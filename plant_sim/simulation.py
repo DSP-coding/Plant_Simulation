@@ -47,6 +47,14 @@ class SimulationSettings:
     remake_days: float = cfg.DEFAULT_REMAKE_DAYS
     sick_enabled: bool = False
     random_seed: int | None = None
+    # Editable "area capacity" per station, in m2/month AT IDEAL STAFFING on
+    # the reference schedule (cfg.REFERENCE_HOURS_PER_MONTH) - e.g. "CNC =
+    # 10,000 m2/month". Defaults to whatever the current rate constants in
+    # config.py already imply, so leaving this untouched reproduces the old
+    # behaviour exactly. See config.default_station_capacity_m2_per_month().
+    station_capacity_m2_per_month: dict[str, float] = field(
+        default_factory=lambda: {sid: cfg.default_station_capacity_m2_per_month(sid)
+                                  for sid in cfg.STATIONS if sid != "admin"})
 
     def horizon_hours(self) -> float:
         if self.horizon == "day":
@@ -140,6 +148,25 @@ class Simulator:
         cum_intake = cum_completed = cum_remade = 0.0
         intake_per_hour = s.intake_m2_per_hour()
 
+        # Resolve each station's user-edited "capacity in m2/month" into what
+        # the engine actually consumes: a per-operator-hour rate for flat-rate
+        # stations, or a scale factor on cut-time for the two CNC stations
+        # (this keeps the S1/S2/S3 relative cut-time ratios intact while
+        # calibrating the absolute level to the capacity you typed in).
+        op_hour_rate: dict[str, float] = {}
+        cnc_scale: dict[str, float] = {}
+        for sid, station in cfg.STATIONS.items():
+            if sid == "admin":
+                continue
+            target_month = s.station_capacity_m2_per_month.get(
+                sid, cfg.default_station_capacity_m2_per_month(sid))
+            if sid in cfg.CNC_STATION_IDS:
+                default_month = cfg.default_cnc_capacity_m2_per_month(station.route)
+                cnc_scale[station.route] = target_month / default_month if default_month > 0 else 1.0
+            else:
+                op_hour_rate[sid] = (target_month / (station.ideal_ops * cfg.REFERENCE_HOURS_PER_MONTH)
+                                      if station.ideal_ops > 0 else station.capacity_m2_per_op_hour)
+
         for h in range(steps):
             day_index = h // 24
             weekday = day_index % 7
@@ -194,7 +221,7 @@ class Simulator:
             ops_per_station = self._headcount_per_station(assignment, active_now)
 
             hour_out = self._process_hour(
-                h, queues, ops_per_station, active_now,
+                h, queues, ops_per_station, active_now, op_hour_rate, cnc_scale,
                 cnc_minutes_by_class, station_out_sum, station_cap_sum)
 
             # -- packing/despatch output -> completed or remade --
@@ -311,7 +338,7 @@ class Simulator:
                 counts[station] += 1
         return counts
 
-    def _process_hour(self, h, queues, ops_per_station, active_now,
+    def _process_hour(self, h, queues, ops_per_station, active_now, op_hour_rate, cnc_scale,
                        cnc_minutes_by_class, station_out_sum, station_cap_sum):
         """Run one simulated hour of production through every station, in
         flow order, and return {station_id: [output batches]}.
@@ -331,11 +358,11 @@ class Simulator:
                 next_sid = sequence[i + 1] if i + 1 < len(sequence) else despatch_sid
                 room = queues[next_sid].headroom(cfg.DEFAULT_BUFFER_CAP_M2)
 
-                if sid in ("cnc_thermo", "cnc_1536"):
-                    produced = self._run_cnc(sid, station, ops, room, queues[sid],
+                if sid in cfg.CNC_STATION_IDS:
+                    produced = self._run_cnc(sid, station, ops, room, queues[sid], cnc_scale[route],
                                               cnc_minutes_by_class, station_cap_sum)
                 else:
-                    capacity = self._flat_capacity_m2_per_hour(sid, station, ops)
+                    capacity = self._flat_capacity_m2_per_hour(sid, station, ops, op_hour_rate[sid])
                     station_cap_sum[sid] += capacity
                     capacity = min(capacity, room)
                     produced = queues[sid].consume_flat_rate(capacity)
@@ -348,7 +375,8 @@ class Simulator:
         # -- shared despatch/packing station, processed once --
         despatch_station = cfg.STATIONS[despatch_sid]
         despatch_ops = ops_per_station[despatch_sid] if despatch_sid in active_now else 0
-        despatch_capacity = self._flat_capacity_m2_per_hour(despatch_sid, despatch_station, despatch_ops)
+        despatch_capacity = self._flat_capacity_m2_per_hour(despatch_sid, despatch_station, despatch_ops,
+                                                              op_hour_rate[despatch_sid])
         station_cap_sum[despatch_sid] += despatch_capacity
         despatch_out = queues[despatch_sid].consume_flat_rate(despatch_capacity)
         out[despatch_sid] = despatch_out
@@ -357,25 +385,30 @@ class Simulator:
         return out
 
     @staticmethod
-    def _flat_capacity_m2_per_hour(sid: str, station, ops: int) -> float:
+    def _flat_capacity_m2_per_hour(sid: str, station, ops: int, rate_m2_per_op_hour: float) -> float:
         if ops <= 0:
             return 0.0
         if sid == "mb_sander":
-            full_rate = station.ideal_ops * station.capacity_m2_per_op_hour
+            full_rate = station.ideal_ops * rate_m2_per_op_hour
             if ops == 1:
                 return full_rate * 0.45  # [ASSUMPTION, from original tool]:
                 # one operator can run the MB Sander but only at ~45% of the
                 # two-operator (infeed+outfeed) rate.
             return full_rate * min(1.0, ops / station.ideal_ops)
-        return ops * station.capacity_m2_per_op_hour
+        return ops * rate_m2_per_op_hour
 
-    def _run_cnc(self, sid, station, ops, room, queue, cnc_minutes_by_class, station_cap_sum):
+    def _run_cnc(self, sid, station, ops, room, queue, scale, cnc_minutes_by_class, station_cap_sum):
         machines_manned = min(ops, station.num_machines)
         available_minutes = machines_manned * 60.0 * cfg.CNC_UTILISATION
         station_cap_sum[sid] += available_minutes  # minutes, not m2 - utilisation is minutes-based for CNC
         route = station.route
+        # `scale` > 1 means the edited capacity is HIGHER than the default
+        # implied capacity, i.e. the machine cuts faster than the default
+        # per-class times - so time-per-m2 shrinks by the same factor. This
+        # preserves the relative S1(7)/S2(14)/S3(50) min/board ratios while
+        # calibrating the absolute level to the capacity you typed in.
         min_per_m2 = {
-            cls: (pc.cnc_min_per_board + cfg.CNC_SETUP_MIN_PER_BOARD) / cfg.BOARD_M2
+            cls: ((pc.cnc_min_per_board + cfg.CNC_SETUP_MIN_PER_BOARD) / cfg.BOARD_M2) / scale
             for cls, pc in cfg.PRODUCT_CLASSES.items() if pc.route == route
         }
         produced = queue.consume_cnc(available_minutes, room, min_per_m2)
