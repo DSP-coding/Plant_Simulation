@@ -262,7 +262,10 @@ STATION_CREW: dict[str, str] = {
 DEFAULT_SHIFT_SCHEDULES: dict[str, ShiftSchedule] = {
     "thermo_cnc": ShiftSchedule(days_per_week=4, day_hrs=10.0, aft_enabled=True, aft_hrs=10.0),
     "finishing": ShiftSchedule(days_per_week=4, day_hrs=10.0, aft_enabled=True, aft_hrs=10.0),
-    "cutclash": ShiftSchedule(days_per_week=5, day_hrs=8.0, aft_enabled=False, aft_hrs=8.0),
+    # [REAL, corrected] an afternoon Cut & Clash shift does run - Jerard
+    # Mendoza works CNC 1536 + Edge Banding in the afternoon. Afternoon
+    # hours are still an [ASSUMPTION] guess (8h) pending confirmation.
+    "cutclash": ShiftSchedule(days_per_week=5, day_hrs=8.0, aft_enabled=True, aft_hrs=8.0),
     "admin": ShiftSchedule(days_per_week=5, day_hrs=8.0, aft_enabled=False, aft_hrs=8.0),
 }
 

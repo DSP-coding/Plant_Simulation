@@ -1,7 +1,7 @@
 id,name,home_station,shift,skills,absence_rate_pct,notes
 393,Silivelia Afoa,admin,aft,,3.8,From staff sheet snapshot (Area: Admin)
 104,Mandeep Kler,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-124,Jerard Mendoza,cnc_thermo,aft,,3.8,From staff sheet snapshot (Area: CNC)
+124,Jerard Mendoza,cnc_1536,aft,eb_drilling,3.8,Confirmed: afternoon CNC 1536 (Cut & Clash) plus afternoon Edge Banding
 201,Nirmal Singh,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
 395,Jay (Marvin) Baluenit,cnc_thermo,day,cnc_1536;eb_drilling,3.8,Example multi-skilled operator per your note: can run all CNCs + edge banding
 396,Prabh Singh,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
