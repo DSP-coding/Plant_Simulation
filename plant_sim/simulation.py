@@ -126,7 +126,11 @@ class Simulator:
         steps = round(H)
         total_days = int(H // 24) + 2
 
-        queues: dict[str, StationQueue] = {sid: StationQueue() for sid in cfg.STATIONS}
+        # press_1/press_2 don't get their own queue - they're two independently
+        # staffed machines pulling from one shared physical pile of work.
+        queues: dict[str, StationQueue] = {sid: StationQueue() for sid in cfg.STATIONS
+                                            if sid not in cfg.PRESS_STATIONS}
+        queues[cfg.PRESS_QUEUE_ID] = StationQueue()
         remake_holding: list[dict] = []  # {"release_hour", "created_hour", "qty", "cls"}
 
         # Per-day absence draw, decided once per calendar day and reused for
@@ -244,9 +248,19 @@ class Simulator:
                                             "qty": bad_qty, "cls": batch.product_class})
                     cum_remade += bad_qty
 
+            # The shared "press" queue isn't a station in its own right (see
+            # PRESS_QUEUE_ID) - report its level under both press_1 and
+            # press_2 so charts/floor-view can show "buffer waiting for a
+            # press" against each machine's own box, instead of an orphaned
+            # "press" entry that isn't in cfg.STATIONS at all.
+            buf = {sid: q.total_m2() for sid, q in queues.items()}
+            press_buf = buf.pop(cfg.PRESS_QUEUE_ID)
+            for press_sid in cfg.PRESS_STATIONS:
+                buf[press_sid] = press_buf
+
             trace.append({
                 "h": h,
-                "buf": {sid: q.total_m2() for sid, q in queues.items()},
+                "buf": buf,
                 "out": {sid: sum(b.qty for b in batches) for sid, batches in hour_out.items()},
                 "ops": ops_per_station,
                 "active": sorted(active_now),
@@ -288,7 +302,7 @@ class Simulator:
         # has to compare minutes-used to minutes-available, not m2 to minutes.
         utilisation = {}
         for sid in cfg.STATIONS:
-            if sid in ("cnc_thermo", "cnc_1536"):
+            if sid in cfg.CNC_STATION_IDS:
                 route = cfg.STATIONS[sid].route
                 minutes_used = sum(cnc_minutes_by_class[c] for c, pc in cfg.PRODUCT_CLASSES.items()
                                     if pc.route == route)
@@ -352,10 +366,14 @@ class Simulator:
         despatch_sid = cfg.SHARED_TERMINAL_STATION
 
         for route, sequence in cfg.ROUTE_SEQUENCE.items():
+            # Thermo's last station (edging) feeds the shared press queue,
+            # not despatch directly - Cut & Clash has no press stage, so its
+            # last station (eb_drilling) goes straight to despatch as before.
+            route_terminal = cfg.PRESS_QUEUE_ID if route == cfg.Route.THERMO else despatch_sid
             for i, sid in enumerate(sequence):
                 station = cfg.STATIONS[sid]
                 ops = ops_per_station[sid] if sid in active_now else 0
-                next_sid = sequence[i + 1] if i + 1 < len(sequence) else despatch_sid
+                next_sid = sequence[i + 1] if i + 1 < len(sequence) else route_terminal
                 room = queues[next_sid].headroom(cfg.DEFAULT_BUFFER_CAP_M2)
 
                 if sid in cfg.CNC_STATION_IDS:
@@ -371,6 +389,25 @@ class Simulator:
                 station_out_sum[sid] += sum(b.qty for b in produced)
                 for b in produced:
                     queues[next_sid].add(b)
+
+        # -- press: two independently-staffed machines pulling from one
+        # shared pile of work, in turn, both feeding the same despatch queue.
+        # Order between them doesn't matter physically (both draw from the
+        # same FIFO queue this same hour); it just decides who gets first
+        # crack at the oldest batch if capacity is tight.
+        press_room = queues[despatch_sid].headroom(cfg.DEFAULT_BUFFER_CAP_M2)
+        for press_sid in cfg.PRESS_STATIONS:
+            press_station = cfg.STATIONS[press_sid]
+            ops = ops_per_station[press_sid] if press_sid in active_now else 0
+            capacity = self._flat_capacity_m2_per_hour(press_sid, press_station, ops, op_hour_rate[press_sid])
+            station_cap_sum[press_sid] += capacity
+            capacity = min(capacity, press_room)
+            produced = queues[cfg.PRESS_QUEUE_ID].consume_flat_rate(capacity)
+            out[press_sid] = produced
+            station_out_sum[press_sid] += sum(b.qty for b in produced)
+            press_room -= sum(b.qty for b in produced)
+            for b in produced:
+                queues[despatch_sid].add(b)
 
         # -- shared despatch/packing station, processed once --
         despatch_station = cfg.STATIONS[despatch_sid]

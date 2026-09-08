@@ -32,7 +32,8 @@ STATION_ICONS = {
     "sanding": "🧹",
     "mb_sander": "🌀",
     "edging": "🧴",
-    "press": "🗜️",
+    "press_1": "🗜️",
+    "press_2": "🗜️",
     "despatch": "📦",
 }
 
@@ -231,7 +232,8 @@ def build_floor_html(trace: list[dict]) -> str:
         {"key": "cutclash", "label": "Cut & Clash (1536)",
          "stations": cfg.ROUTE_SEQUENCE[cfg.Route.CUT_AND_CLASH] + [cfg.SHARED_TERMINAL_STATION]},
         {"key": "thermo", "label": "Thermo (Series 1/2/3)",
-         "stations": cfg.ROUTE_SEQUENCE[cfg.Route.THERMO] + [cfg.SHARED_TERMINAL_STATION]},
+         "stations": cfg.ROUTE_SEQUENCE[cfg.Route.THERMO] + list(cfg.PRESS_STATIONS)
+                     + [cfg.SHARED_TERMINAL_STATION]},
     ]
     rows_json = [
         {

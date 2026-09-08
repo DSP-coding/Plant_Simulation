@@ -134,8 +134,14 @@ STATIONS: dict[str, Station] = {
                            ideal_ops=2, capacity_m2_per_op_hour=45.5, num_machines=1),
     "edging":     Station("edging", "Edging (Cefla glueing)", Route.THERMO,
                            ideal_ops=2, capacity_m2_per_op_hour=13.0),
-    "press":      Station("press", "Press 1 + 2", Route.THERMO,
-                           ideal_ops=6, capacity_m2_per_op_hour=6.1, num_machines=2),
+    # Press 1 and Press 2 are staffed (and edited) independently, but they're
+    # two machines doing the same job on one shared pile of work - see
+    # PRESS_QUEUE_ID / PRESS_STATIONS below and the dedicated handling in
+    # simulation.py, rather than each getting its own separate buffer.
+    "press_1":    Station("press_1", "Press 1", Route.THERMO,
+                           ideal_ops=3, capacity_m2_per_op_hour=6.1, num_machines=1),
+    "press_2":    Station("press_2", "Press 2", Route.THERMO,
+                           ideal_ops=3, capacity_m2_per_op_hour=6.1, num_machines=1),
     "glue":       Station("glue", "Glue", Route.THERMO,
                            ideal_ops=2, capacity_m2_per_op_hour=8.0),
     "despatch":   Station("despatch", "Packing / Despatch", None,
@@ -188,14 +194,20 @@ def default_station_capacity_m2_per_month(station_id: str) -> float:
     return station.ideal_ops * station.capacity_m2_per_op_hour * REFERENCE_HOURS_PER_MONTH
 
 
-# Ordered station sequence for each route, NOT including "despatch" - Packing/
-# Despatch is a shared merge point fed by both routes' last station, so it is
-# processed once per hour (see simulation.py), not once per route.
+# Ordered station sequence for each route, NOT including "despatch" or
+# "press" - both are handled as special shared-queue stages in simulation.py
+# rather than plain 1-station-1-queue steps:
+#   - Despatch is a merge point fed by BOTH routes' last station.
+#   - Press is fed by ONE route (Thermo), but by TWO independently-staffed
+#     machines (press_1, press_2) pulling from the same physical pile of
+#     work - parts don't care which press they go through.
 ROUTE_SEQUENCE = {
-    Route.THERMO: ["cnc_thermo", "sanding", "mb_sander", "edging", "press"],
+    Route.THERMO: ["cnc_thermo", "sanding", "mb_sander", "edging"],
     Route.CUT_AND_CLASH: ["optimising", "cnc_1536", "eb_drilling"],
 }
 SHARED_TERMINAL_STATION = "despatch"
+PRESS_QUEUE_ID = "press"          # the shared physical buffer both presses draw from
+PRESS_STATIONS = ("press_1", "press_2")  # the two independently-staffed machines
 
 # The station where a fresh order (or a released remake) of a given product
 # class first enters the factory.
@@ -236,7 +248,8 @@ STATION_CREW: dict[str, str] = {
     "sanding": "thermo_cnc",
     "mb_sander": "finishing",
     "edging": "finishing",
-    "press": "finishing",
+    "press_1": "finishing",
+    "press_2": "finishing",
     "glue": "finishing",
     "despatch": "finishing",
     "optimising": "cutclash",
