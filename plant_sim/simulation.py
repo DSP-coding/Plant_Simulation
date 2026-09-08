@@ -26,9 +26,17 @@ from plant_sim.staff import Roster
 @dataclass
 class SimulationSettings:
     horizon: str = "month"                 # "day" | "week" | "month"
-    intake_m2_per_day: float = cfg.REAL_DAILY_M2["median"]
+    # Total intake FOR THE SELECTED HORIZON (e.g. if horizon="week", this is
+    # m2 for the whole week, not m2/day) - see intake_m2_per_hour() below.
+    # This matters: entering a monthly total while the engine assumed it was
+    # a daily rate used to inflate the effective monthly intake ~30x, which
+    # is why completion % looked absurdly low before this was fixed.
+    intake_m2_for_horizon: float = cfg.REAL_INTAKE_M2["month"]["combined"]["median"]
     mix_pct: dict[str, float] = field(default_factory=lambda: dict(cfg.DEFAULT_MIX_PCT))
-    target_lead_days: float = 10.0
+    # Separate target lead time per product range - Cut & Clash (1536) quotes
+    # 7 days; Thermo defaults to 10 (edit freely).
+    target_lead_days: dict[str, float] = field(
+        default_factory=lambda: dict(cfg.DEFAULT_TARGET_LEAD_DAYS))
     pre_prod_days: float = 1.5
     post_prod_days: float = 0.5
     shift_schedules: dict[str, cfg.ShiftSchedule] = field(
@@ -47,6 +55,9 @@ class SimulationSettings:
             return 168.0
         return cfg.WEEKS_PER_MONTH * 168.0
 
+    def intake_m2_per_hour(self) -> float:
+        return self.intake_m2_for_horizon / self.horizon_hours()
+
 
 @dataclass
 class DailyStat:
@@ -57,19 +68,38 @@ class DailyStat:
 
 
 @dataclass
+class RouteMetrics:
+    """DIFOT/lead-time/backlog figures for one product range (Thermo or Cut
+    & Clash), judged against that range's own target lead time."""
+    route: str
+    label: str
+    target_lead_days: float
+    completed_m2: float
+    overall_avg_lead_days: float
+    overall_difot_pct: float
+    overdue_backlog_m2: float
+    daily_stats: list[DailyStat]
+
+    @property
+    def has_completions(self) -> bool:
+        return self.completed_m2 > 0
+
+
+@dataclass
 class SimulationResult:
     settings: SimulationSettings
     trace: list[dict]                     # one entry per simulated hour
-    daily_stats: list[DailyStat]
+    daily_stats: list[DailyStat]          # combined across both routes
     cum_intake_m2: float
     cum_completed_m2: float
     cum_remade_m2: float
-    overdue_backlog_m2: float
-    overall_avg_lead_days: float
-    overall_difot_pct: float
+    overdue_backlog_m2: float             # combined across both routes
+    overall_avg_lead_days: float          # combined (each item judged by its own route's target)
+    overall_difot_pct: float              # combined
     station_utilisation: dict[str, float]      # 0..1, output / available capacity
     completed_m2_by_class: dict[str, float]
     attendance_log: list[dict]             # one row per (day, operator) - for absenteeism charts
+    by_route: dict[str, RouteMetrics]      # per-product-range breakdown (Thermo vs Cut & Clash)
 
     @property
     def has_completions(self) -> bool:
@@ -108,7 +138,7 @@ class Simulator:
         completed_m2_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
 
         cum_intake = cum_completed = cum_remade = 0.0
-        intake_per_hour = s.intake_m2_per_day / 24.0
+        intake_per_hour = s.intake_m2_per_hour()
 
         for h in range(steps):
             day_index = h // 24
@@ -176,8 +206,9 @@ class Simulator:
                     good_qty = batch.qty - bad_qty
                 if good_qty > 1e-9:
                     lead_days = s.pre_prod_days + (h - batch.created_hour) / 24.0 + s.post_prod_days
-                    completed_log.append({"day": day_index, "qty": good_qty,
-                                           "lead_days": lead_days, "cls": batch.product_class})
+                    route = cfg.PRODUCT_CLASSES[batch.product_class].route
+                    completed_log.append({"day": day_index, "qty": good_qty, "lead_days": lead_days,
+                                           "cls": batch.product_class, "route": route})
                     completed_m2_by_class[batch.product_class] += good_qty
                     cum_completed += good_qty
                 if bad_qty > 1e-9:
@@ -194,10 +225,34 @@ class Simulator:
                 "cum_intake": cum_intake, "cum_completed": cum_completed, "cum_remade": cum_remade,
             })
 
-        daily_stats = self._daily_stats(completed_log, s.target_lead_days)
+        # Combined metrics: every completed/backlogged item is judged against
+        # its OWN product range's target lead time (Thermo vs Cut & Clash),
+        # then pooled together for the headline KPIs.
+        target_lookup = {e_route: e_target for e_route, e_target in s.target_lead_days.items()}
+        daily_stats = self._daily_stats(completed_log, target_lookup)
         overall_avg_lead, overall_difot, overdue_backlog = self._overall_metrics(
-            completed_log, queues, remake_holding, s.target_lead_days, s.pre_prod_days,
+            completed_log, queues, remake_holding, target_lookup, s.pre_prod_days,
             s.post_prod_days, H)
+
+        # Per-route breakdown - same calculations, filtered to one route at a
+        # time, so Thermo and Cut & Clash each get their own DIFOT/lead-time
+        # judged against their own target.
+        by_route: dict[str, RouteMetrics] = {}
+        route_labels = {cfg.Route.THERMO: "Thermo", cfg.Route.CUT_AND_CLASH: "Cut & Clash"}
+        for route, label in route_labels.items():
+            route_log = [e for e in completed_log if e["route"] == route]
+            route_target = {route: s.target_lead_days[route]}
+            r_daily = self._daily_stats(route_log, route_target)
+            r_avg_lead, r_difot, r_overdue = self._overall_metrics(
+                route_log, queues, remake_holding, route_target, s.pre_prod_days,
+                s.post_prod_days, H, route_filter=route)
+            by_route[route] = RouteMetrics(
+                route=route, label=label, target_lead_days=s.target_lead_days[route],
+                completed_m2=sum(e["qty"] for e in route_log),
+                overall_avg_lead_days=r_avg_lead, overall_difot_pct=r_difot,
+                overdue_backlog_m2=r_overdue, daily_stats=r_daily,
+            )
+
         # Utilisation = output / available capacity, both in the same units.
         # For CNC stations, capacity was tracked in machine-*minutes* (cycle
         # time depends on product class) rather than m2, so their utilisation
@@ -219,6 +274,7 @@ class Simulator:
             overdue_backlog_m2=overdue_backlog, overall_avg_lead_days=overall_avg_lead,
             overall_difot_pct=overall_difot, station_utilisation=utilisation,
             completed_m2_by_class=completed_m2_by_class, attendance_log=attendance_log,
+            by_route=by_route,
         )
 
     # -----------------------------------------------------------------
@@ -325,13 +381,16 @@ class Simulator:
             cnc_minutes_by_class[b.product_class] += b.qty * min_per_m2[b.product_class]
         return produced
 
-    def _daily_stats(self, completed_log, target_lead_days) -> list[DailyStat]:
+    def _daily_stats(self, completed_log, target_lookup: dict[str, float]) -> list[DailyStat]:
+        """target_lookup maps route -> target lead days; each entry is judged
+        against the target for ITS OWN route, so combined and per-route calls
+        both just work by passing either the full lookup or a single-route one."""
         by_day: dict[int, dict] = {}
         for e in completed_log:
             d = by_day.setdefault(e["day"], {"qty": 0.0, "lead_sum": 0.0, "on_time": 0.0})
             d["qty"] += e["qty"]
             d["lead_sum"] += e["lead_days"] * e["qty"]
-            if e["lead_days"] <= target_lead_days:
+            if e["lead_days"] <= target_lookup[e["route"]]:
                 d["on_time"] += e["qty"]
         return [
             DailyStat(day=d, avg_lead_days=v["lead_sum"] / v["qty"],
@@ -339,25 +398,34 @@ class Simulator:
             for d, v in sorted(by_day.items())
         ]
 
-    def _overall_metrics(self, completed_log, queues, remake_holding, target_lead_days,
-                          pre_prod_days, post_prod_days, H):
+    def _overall_metrics(self, completed_log, queues, remake_holding, target_lookup: dict[str, float],
+                          pre_prod_days, post_prod_days, H, route_filter: str | None = None):
         lead_sum = on_time_sum = qty_sum = 0.0
         for e in completed_log:
             lead_sum += e["lead_days"] * e["qty"]
             qty_sum += e["qty"]
-            if e["lead_days"] <= target_lead_days:
+            if e["lead_days"] <= target_lookup[e["route"]]:
                 on_time_sum += e["qty"]
         overall_avg_lead = lead_sum / qty_sum if qty_sum > 0 else 0.0
+
+        def batch_route(product_class: str) -> str:
+            return cfg.PRODUCT_CLASSES[product_class].route
 
         overdue = 0.0
         for q in queues.values():
             for b in q.batches:
+                route = batch_route(b.product_class)
+                if route_filter and route != route_filter:
+                    continue
                 hyp_lead = pre_prod_days + (H - b.created_hour) / 24.0 + post_prod_days
-                if hyp_lead > target_lead_days:
+                if hyp_lead > target_lookup[route]:
                     overdue += b.qty
         for r in remake_holding:
+            route = batch_route(r["cls"])
+            if route_filter and route != route_filter:
+                continue
             hyp_lead = pre_prod_days + (H - r["created_hour"]) / 24.0 + post_prod_days
-            if hyp_lead > target_lead_days:
+            if hyp_lead > target_lookup[route]:
                 overdue += r["qty"]
 
         denom = qty_sum + overdue

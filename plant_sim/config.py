@@ -209,15 +209,39 @@ DEFAULT_SHIFT_SCHEDULES: dict[str, ShiftSchedule] = {
 # Intake volume defaults
 # ---------------------------------------------------------------------------
 
-# [REAL] product_2026.xlsx, 177 active production days, 5 Jan - 7 Sep 2026.
-REAL_DAILY_M2 = {
-    "min": 0.0,
-    "median": 297.0,
-    "mean": 331.0,
-    "p90": 515.0,
-    "max": 1462.0,   # 14 May 2026, driven by a large Melamine order
+# [REAL] product_2026.xlsx, Jan-Sep 2026. Three horizons, each with the
+# combined total and the Thermo/Cut&Clash split (computed on days/weeks/
+# months where that route actually had any volume, so these are "typical
+# active period" figures, not averaged-with-zeros). Weekly/monthly figures
+# use full calendar weeks/months only (partial first/last period excluded).
+REAL_INTAKE_M2 = {
+    "day": {
+        "combined": {"median": 297.0, "mean": 331.0, "p90": 515.0, "max": 1462.0},
+        "thermo":   {"median": 256.0, "mean": 272.0, "p90": 433.0, "max": 734.0},
+        "cutclash": {"median": 43.0, "mean": 69.0, "p90": 105.0, "max": 1152.0},
+    },
+    "week": {
+        "combined": {"median": 1597.0, "mean": 1706.0, "p90": 2306.0, "max": 3312.0},
+        # route split not separately computed for week/month - approximate
+        # by applying the overall 80.6% / 19.4% YTD share to the combined figure.
+        "thermo":   {"median": 1287.0, "mean": 1375.0, "p90": 1859.0, "max": 2669.0},
+        "cutclash": {"median": 310.0, "mean": 331.0, "p90": 448.0, "max": 643.0},
+    },
+    "month": {
+        "combined": {"median": 7232.0, "mean": 7499.0, "p90": 9415.0, "max": 9415.0},
+        "thermo":   {"median": 5829.0, "mean": 6044.0, "p90": 7589.0, "max": 7589.0},
+        "cutclash": {"median": 1403.0, "mean": 1456.0, "p90": 1828.0, "max": 1828.0},
+    },
 }
 WEEKS_PER_MONTH = 4.345
+
+# [REAL] target lead time is different per product range - Cut & Clash quotes
+# a 7-day lead time; Thermo's target is still the [ASSUMPTION] 10-day
+# placeholder from the old tool pending your confirmation.
+DEFAULT_TARGET_LEAD_DAYS = {
+    Route.THERMO: 10.0,
+    Route.CUT_AND_CLASH: 7.0,  # [REAL] per your instruction
+}
 
 
 # ---------------------------------------------------------------------------

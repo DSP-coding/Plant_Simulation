@@ -59,21 +59,37 @@ with st.sidebar:
     st.header("Order intake & target")
     horizon = st.selectbox("Horizon", ["day", "week", "month"], index=2)
 
-    st.caption("Presets from real order data (product 2026.xlsx, Jan-Sep 2026):")
-    if "intake_m2" not in st.session_state:
-        st.session_state["intake_m2"] = cfg.REAL_DAILY_M2["median"]
+    # The intake number means "total m2 FOR THE SELECTED HORIZON" - i.e. if
+    # you pick Week, this is m2 for the whole week, not m2/day. Each horizon
+    # remembers its own last-entered value (separate session_state keys) so
+    # switching horizons doesn't silently reinterpret your number.
+    intake_key = f"intake_m2_{horizon}"
+    horizon_stats = cfg.REAL_INTAKE_M2[horizon]["combined"]
+    if intake_key not in st.session_state:
+        st.session_state[intake_key] = horizon_stats["median"]
+
+    st.caption(f"Presets from real order data (product 2026.xlsx, Jan-Sep 2026) "
+               f"for a typical **{horizon}**:")
     preset_cols = st.columns(2)
-    if preset_cols[0].button(f"Median day ({cfg.REAL_DAILY_M2['median']:.0f} m²)"):
-        st.session_state["intake_m2"] = cfg.REAL_DAILY_M2["median"]
-    if preset_cols[1].button(f"Busiest day ({cfg.REAL_DAILY_M2['max']:.0f} m²)"):
-        st.session_state["intake_m2"] = cfg.REAL_DAILY_M2["max"]
+    if preset_cols[0].button(f"Median {horizon} ({horizon_stats['median']:.0f} m²)"):
+        st.session_state[intake_key] = horizon_stats["median"]
+    if preset_cols[1].button(f"Busiest {horizon} ({horizon_stats['max']:.0f} m²)"):
+        st.session_state[intake_key] = horizon_stats["max"]
 
     # NOTE: no `value=` here - the widget's value lives entirely in
-    # st.session_state["intake_m2"] (initialised above), since Streamlit
+    # st.session_state[intake_key] (initialised above), since Streamlit
     # forbids passing `value=` together with a `key=` that other widgets
     # (the preset buttons) also write to.
-    intake_m2 = st.number_input("Intake (m²/day)", min_value=0.0, step=10.0, key="intake_m2")
-    target_lead_days = st.number_input("Target lead time (days)", min_value=0.0, value=10.0, step=0.5)
+    intake_m2_for_horizon = st.number_input(f"Intake (m² / {horizon})", min_value=0.0, step=10.0,
+                                             key=intake_key)
+
+    st.caption("Cut & Clash (1536) quotes its own lead time, separate from Thermo.")
+    target_lead_thermo = st.number_input("Target lead time - Thermo (days)", min_value=0.0,
+                                          value=cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.THERMO], step=0.5)
+    target_lead_cutclash = st.number_input("Target lead time - Cut & Clash (days)", min_value=0.0,
+                                            value=cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.CUT_AND_CLASH],
+                                            step=0.5)
+    target_lead_days = {cfg.Route.THERMO: target_lead_thermo, cfg.Route.CUT_AND_CLASH: target_lead_cutclash}
 
     st.divider()
     st.header("Product mix (%)")
@@ -199,7 +215,7 @@ with tab_staff:
 with tab_results:
     if st.button("▶ Run simulation", type="primary"):
         settings = SimulationSettings(
-            horizon=horizon, intake_m2_per_day=intake_m2, mix_pct=mix_pct,
+            horizon=horizon, intake_m2_for_horizon=intake_m2_for_horizon, mix_pct=mix_pct,
             target_lead_days=target_lead_days, shift_schedules=shift_schedules,
             remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
             sick_enabled=sick_enabled, random_seed=int(seed),
@@ -228,6 +244,17 @@ with tab_results:
         c4.metric("DIFOT %", f"{result.overall_difot_pct:.0f}%" if result.has_completions else "—")
 
         st.divider()
+        st.subheader("By product range (Thermo vs Cut & Clash) - each judged against its own target lead time")
+        route_cols = st.columns(len(result.by_route))
+        for col, rm in zip(route_cols, result.by_route.values()):
+            with col:
+                st.markdown(f"**{rm.label}** (target {rm.target_lead_days:.0f}d)")
+                st.metric("Completed (m²)", f"{rm.completed_m2:,.0f}")
+                st.metric("Avg lead (days)", f"{rm.overall_avg_lead_days:.1f}" if rm.has_completions else "—")
+                st.metric("DIFOT %", f"{rm.overall_difot_pct:.0f}%" if rm.has_completions else "—")
+                st.metric("Overdue backlog (m²)", f"{rm.overdue_backlog_m2:,.0f}")
+
+        st.divider()
         st.subheader("Station utilisation")
         util_df = pd.DataFrame({
             "Station": [station_label(s) for s in result.station_utilisation],
@@ -251,15 +278,20 @@ with tab_results:
         st.line_chart(cum_df)
 
         if result.has_completions:
-            st.subheader("Lead time & DIFOT by day completed")
-            daily_df = pd.DataFrame([
-                {"Day": d.day, "Avg lead (days)": d.avg_lead_days, "DIFOT %": d.difot_pct,
-                 "Qty (m²)": d.qty_m2}
-                for d in result.daily_stats
-            ]).set_index("Day")
-            col_a, col_b = st.columns(2)
-            col_a.line_chart(daily_df[["Avg lead (days)"]])
-            col_b.bar_chart(daily_df[["DIFOT %"]])
+            st.subheader("Lead time & DIFOT by day completed - Thermo vs Cut & Clash")
+            for rm in result.by_route.values():
+                st.markdown(f"**{rm.label}** (target {rm.target_lead_days:.0f} days)")
+                if not rm.has_completions:
+                    st.caption("No completions yet for this range in this horizon.")
+                    continue
+                route_daily_df = pd.DataFrame([
+                    {"Day": d.day, "Avg lead (days)": d.avg_lead_days, "DIFOT %": d.difot_pct,
+                     "Qty (m²)": d.qty_m2}
+                    for d in rm.daily_stats
+                ]).set_index("Day")
+                col_a, col_b = st.columns(2)
+                col_a.line_chart(route_daily_df[["Avg lead (days)"]])
+                col_b.bar_chart(route_daily_df[["DIFOT %"]])
         else:
             st.info("No completions yet in this horizon - try Week or Month.")
 
