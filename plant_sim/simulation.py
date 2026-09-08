@@ -221,6 +221,8 @@ class Simulator:
                 "h": h,
                 "buf": {sid: q.total_m2() for sid, q in queues.items()},
                 "out": {sid: sum(b.qty for b in batches) for sid, batches in hour_out.items()},
+                "ops": ops_per_station,
+                "active": sorted(active_now),
                 "remake_held": sum(r["qty"] for r in remake_holding),
                 "cum_intake": cum_intake, "cum_completed": cum_completed, "cum_remade": cum_remade,
             })

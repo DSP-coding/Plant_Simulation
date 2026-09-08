@@ -18,8 +18,10 @@ factory *behaves*, edit that package. This file only wires up the UI.
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from plant_sim import config as cfg
+from plant_sim.floor_view import build_floor_html
 from plant_sim.simulation import Simulator, SimulationSettings
 from plant_sim.staff import Operator, Roster
 
@@ -253,6 +255,12 @@ with tab_results:
                 st.metric("Avg lead (days)", f"{rm.overall_avg_lead_days:.1f}" if rm.has_completions else "—")
                 st.metric("DIFOT %", f"{rm.overall_difot_pct:.0f}%" if rm.has_completions else "—")
                 st.metric("Overdue backlog (m²)", f"{rm.overdue_backlog_m2:,.0f}")
+
+        st.divider()
+        st.subheader("Factory floor - live")
+        st.caption("Play through the simulated period and watch units (m²) physically flow "
+                   "station to station, with each box's current buffer, staffing and shift status.")
+        components.html(build_floor_html(result.trace), height=430, scrolling=True)
 
         st.divider()
         st.subheader("Station utilisation")
