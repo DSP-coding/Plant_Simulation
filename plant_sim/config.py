@@ -293,18 +293,37 @@ REAL_INTAKE_M2 = {
         "cutclash": {"median": 310.0, "mean": 331.0, "p90": 448.0, "max": 643.0},
     },
     "month": {
-        "combined": {"median": 7232.0, "mean": 7499.0, "p90": 9415.0, "max": 9415.0},
-        # [REAL, updated] Thermo monthly intake m2 now sourced from the live
-        # lead-time-dashboard SQL system (916,299 scan rows, Jan-Aug 2026 full
-        # months; Sep excluded as partial) rather than the product_2026.xlsx
-        # snapshot - this system tracks Order Entry->Optimisation->CNC->
-        # Sanding->Thermoform Press->Packing->Despatch, i.e. Thermo only.
-        # Monthly intake m2: 4948.0, 6332.5, 9569.4, 7126.9, 7842.7, 6895.8,
-        # 7045.2, 6840.8 (Jan-Aug).
-        "thermo":   {"median": 6971.0, "mean": 7075.0, "p90": 9569.0, "max": 9569.0},
-        "cutclash": {"median": 1403.0, "mean": 1456.0, "p90": 1828.0, "max": 1828.0},
+        # [REAL, updated again] 13-month history Jun-25 through Jun-26 from
+        # your monthly production tracker - the most complete series yet
+        # (supersedes both the product_2026.xlsx snapshot and the partial
+        # Jan-Aug 2026 lead-time-dashboard figures used previously).
+        # Total m2 by month: 6618, 9103, 7300, 7747, 8763, 8403, 6702, 5442,
+        # 6706, 8409, 7702, 7049, 6373.
+        "combined": {"median": 7300.0, "mean": 7409.0, "p90": 8763.0, "max": 9103.0},
+        # Thermo m2 by month: 5333, 8236, 6638, 6549, 7849, 7503, 6280, 4870,
+        # 6005, 6671, 6841, 5237, 5518.
+        "thermo":   {"median": 6549.0, "mean": 6425.0, "p90": 7849.0, "max": 8236.0},
+        # Cut & Clash = Total - Thermo per month (not given directly).
+        "cutclash": {"median": 867.0, "mean": 984.0, "p90": 1738.0, "max": 1812.0},
     },
 }
+
+# [REAL] Reference-only historical benchmarks from the same 13-month tracker
+# (Jun-25 through Jun-26) - not wired into the simulation directly (the exact
+# scope of "Production Hours" - which stations/people it counts, and whether
+# it's labour-hours or something else - hasn't been confirmed), but useful
+# for sanity-checking simulated results against real plant performance:
+#   - Real DIFOT ranged 55%-97% month to month, averaging ~82% - notably
+#     higher than the ~75% figure from the shorter partial-year lead-time
+#     dashboard, and a reminder that DIFOT swings hard month to month even
+#     in the real plant (this isn't a single fixed number to hit).
+#   - Real "Actual Production Hours" ranged 5,303-9,677/month (mean 7,745).
+#   - Real throughput averaged ~0.97 m2 of Total output per actual production
+#     hour (range roughly 0.84-1.08) - a whole-plant aggregate figure, not
+#     broken down by station.
+REAL_DIFOT_HISTORY_PCT = {"min": 55.0, "max": 97.0, "mean": 81.7}
+REAL_PRODUCTION_HOURS_PER_MONTH = {"min": 5303.0, "max": 9677.0, "mean": 7745.0}
+REAL_M2_PER_PRODUCTION_HOUR = 0.965
 
 # [REAL] target lead time is different per product range - Cut & Clash quotes
 # a 7-day lead time. Thermo's 10-day target is now [REAL, confirmed]: your
