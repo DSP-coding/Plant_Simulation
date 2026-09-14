@@ -25,17 +25,17 @@ id,name,home_station,shift,skills,absence_rate_pct,notes
 114,Misiluni Malolua,glue,day,,3.8,From staff sheet snapshot (Area: Glue)
 531,Viavia Sese,glue,day,,3.8,From staff sheet snapshot (Area: Glue)
 203,Diana Savage,optimising,day,,3.8,From staff sheet snapshot (Area: Optimising)
-62,Vili Fonua,press_1,day,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-118,Rodney Viloria,press_1,day,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-135,Glenn Dominguez,press_1,aft,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-200,Stuart Taueetia,press_1,day,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-376,Alfonso Mendoza,press_2,day,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-379,Carlito Padiclas,press_2,day,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-413,Silao Tufuga,press_2,day,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-554,Pili Poka Sanele,press_2,day,mb_sander,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-76,Bang Le,sanding,day,,3.8,From staff sheet snapshot (Area: Sanding)
-373,Bao Sok Keo,sanding,aft,,3.8,From staff sheet snapshot (Area: Sanding)
-389,Tan Viet Nguyen,sanding,aft,,3.8,From staff sheet snapshot (Area: Sanding)
-398,Jett Atiwag,sanding,day,,3.8,From staff sheet snapshot (Area: Sanding)
-423,Quyen Nguyen,sanding,day,,3.8,From staff sheet snapshot (Area: Sanding)
-530,Hai Hoang,sanding,day,,3.8,From staff sheet snapshot (Area: Sanding)
+62,Vili Fonua,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+118,Rodney Viloria,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+135,Glenn Dominguez,press_1,aft,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+200,Stuart Taueetia,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+376,Alfonso Mendoza,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+379,Carlito Padiclas,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+413,Silao Tufuga,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+554,Pili Poka Sanele,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
+76,Bang Le,mb_sander,day,sanding,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
+373,Bao Sok Keo,mb_sander,aft,sanding,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Aft crew of 2 split 1/1 as home station (MB Sander/Sanding), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
+389,Tan Viet Nguyen,sanding,aft,mb_sander,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Aft crew of 2 split 1/1 as home station (MB Sander/Sanding), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
+398,Jett Atiwag,mb_sander,day,sanding,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
+423,Quyen Nguyen,sanding,day,mb_sander,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
+530,Hai Hoang,sanding,day,mb_sander,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"

@@ -364,6 +364,23 @@ DEFAULT_ABSENCE_RATE_PCT = 3.8
 # station once you know real shelf/trolley space limits.
 DEFAULT_BUFFER_CAP_M2 = 5000.0
 
+# [SIMULATION METHODOLOGY, not a plant fact] Every run starts with every
+# queue completely empty - the real factory never does; it always has
+# work-in-progress already sitting at every station. Without a warm-up, the
+# first ~1.5 lead-times' worth of simulated hours show artificially low
+# completion% and DIFOT simply because nothing has had time to travel all
+# the way through the pipeline yet, even if long-run capacity is perfectly
+# fine. To avoid that cold-start bias polluting the reported KPIs, the
+# simulator actually runs for (this many days + the requested horizon),
+# and only starts counting intake/completions/DIFOT/attendance once this
+# warm-up period has elapsed - by which point queues hold a realistic
+# steady-state level of WIP, same as walking onto the real factory floor
+# on any ordinary day. 21 days covers Thermo's longest real lead time
+# (10 working days = up to ~14 calendar days) plus pre/post-production
+# buffer with room to spare. Raise this if a route's target lead time is
+# ever set higher than ~15 days.
+SIMULATION_WARMUP_DAYS = 21.0
+
 # Hour-of-day boundary used to decide whether "now" counts as the day-shift or
 # afternoon-shift allocation snapshot (see simulation.py). [ASSUMPTION/
 # SIMPLIFICATION]: real crews have slightly different day-shift lengths

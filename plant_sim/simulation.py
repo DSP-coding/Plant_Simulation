@@ -126,6 +126,16 @@ class Simulator:
         steps = round(H)
         total_days = int(H // 24) + 2
 
+        # Run a warm-up period before the reporting window so every queue
+        # already holds realistic steady-state WIP by the time we start
+        # counting KPIs - see cfg.SIMULATION_WARMUP_DAYS for why. The clock
+        # keeps running continuously across the boundary (shift schedules,
+        # absences, and queue contents all carry through); only the stats
+        # collected below get gated on `recording`.
+        warmup_days = round(cfg.SIMULATION_WARMUP_DAYS)
+        warmup_hours = warmup_days * 24
+        end_hour = warmup_hours + steps
+
         # press_1/press_2 don't get their own queue - they're two independently
         # staffed machines pulling from one shared physical pile of work.
         queues: dict[str, StationQueue] = {sid: StationQueue() for sid in cfg.STATIONS
@@ -171,10 +181,12 @@ class Simulator:
                 op_hour_rate[sid] = (target_month / (station.ideal_ops * cfg.REFERENCE_HOURS_PER_MONTH)
                                       if station.ideal_ops > 0 else station.capacity_m2_per_op_hour)
 
-        for h in range(steps):
+        for h in range(warmup_hours + steps):
             day_index = h // 24
             weekday = day_index % 7
             hour_of_day = h % 24
+            recording = h >= warmup_hours
+            record_day_index = day_index - warmup_days
 
             if day_index not in absences_by_day:
                 absences_by_day[day_index] = self.roster.roll_daily_absences(
@@ -194,7 +206,8 @@ class Simulator:
                 if qty > 1e-9:
                     entry = cfg.ROUTE_ENTRY_STATION[cfg.PRODUCT_CLASSES[cls].route]
                     queues[entry].add(Batch(h, qty, cls))
-                cum_intake += qty
+                if recording:
+                    cum_intake += qty
 
             # -- which stations are actually running this hour? --
             active_now = self._active_stations(weekday, hour_of_day)
@@ -211,15 +224,16 @@ class Simulator:
                 active_for_snapshot = self._active_stations_for_shift_label(shift_label)
                 assignment = allocate_shift(available_ops, active_for_snapshot, queue_snapshot)
                 allocation_cache[cache_key] = assignment
-                for op in self.roster.operators:
-                    attendance_log.append({
-                        "day": day_index, "operator_id": op.id, "operator_name": op.name,
-                        "shift": shift_label,
-                        "status": "absent" if op.id in absent_ids else
-                                  ("working" if op.id in assignment and assignment[op.id] else
-                                   ("idle" if op.shift == shift_label else "off_shift")),
-                        "station": assignment.get(op.id) if op.id not in absent_ids else None,
-                    })
+                if recording:
+                    for op in self.roster.operators:
+                        attendance_log.append({
+                            "day": record_day_index, "operator_id": op.id, "operator_name": op.name,
+                            "shift": shift_label,
+                            "status": "absent" if op.id in absent_ids else
+                                      ("working" if op.id in assignment and assignment[op.id] else
+                                       ("idle" if op.shift == shift_label else "off_shift")),
+                            "station": assignment.get(op.id) if op.id not in absent_ids else None,
+                        })
             assignment = allocation_cache[cache_key]
 
             ops_per_station = self._headcount_per_station(assignment, active_now)
@@ -240,35 +254,38 @@ class Simulator:
                     lead_days = (s.pre_prod_days
                                  + self._days_elapsed(batch.created_hour, h, route)
                                  + s.post_prod_days)
-                    completed_log.append({"day": day_index, "qty": good_qty, "lead_days": lead_days,
-                                           "cls": batch.product_class, "route": route})
-                    completed_m2_by_class[batch.product_class] += good_qty
-                    cum_completed += good_qty
+                    if recording:
+                        completed_log.append({"day": record_day_index, "qty": good_qty, "lead_days": lead_days,
+                                               "cls": batch.product_class, "route": route})
+                        completed_m2_by_class[batch.product_class] += good_qty
+                        cum_completed += good_qty
                 if bad_qty > 1e-9:
                     remake_holding.append({"release_hour": h + s.remake_days * 24,
                                             "created_hour": batch.created_hour,
                                             "qty": bad_qty, "cls": batch.product_class})
-                    cum_remade += bad_qty
+                    if recording:
+                        cum_remade += bad_qty
 
             # The shared "press" queue isn't a station in its own right (see
             # PRESS_QUEUE_ID) - report its level under both press_1 and
             # press_2 so charts/floor-view can show "buffer waiting for a
             # press" against each machine's own box, instead of an orphaned
             # "press" entry that isn't in cfg.STATIONS at all.
-            buf = {sid: q.total_m2() for sid, q in queues.items()}
-            press_buf = buf.pop(cfg.PRESS_QUEUE_ID)
-            for press_sid in cfg.PRESS_STATIONS:
-                buf[press_sid] = press_buf
+            if recording:
+                buf = {sid: q.total_m2() for sid, q in queues.items()}
+                press_buf = buf.pop(cfg.PRESS_QUEUE_ID)
+                for press_sid in cfg.PRESS_STATIONS:
+                    buf[press_sid] = press_buf
 
-            trace.append({
-                "h": h,
-                "buf": buf,
-                "out": {sid: sum(b.qty for b in batches) for sid, batches in hour_out.items()},
-                "ops": ops_per_station,
-                "active": sorted(active_now),
-                "remake_held": sum(r["qty"] for r in remake_holding),
-                "cum_intake": cum_intake, "cum_completed": cum_completed, "cum_remade": cum_remade,
-            })
+                trace.append({
+                    "h": h - warmup_hours,
+                    "buf": buf,
+                    "out": {sid: sum(b.qty for b in batches) for sid, batches in hour_out.items()},
+                    "ops": ops_per_station,
+                    "active": sorted(active_now),
+                    "remake_held": sum(r["qty"] for r in remake_holding),
+                    "cum_intake": cum_intake, "cum_completed": cum_completed, "cum_remade": cum_remade,
+                })
 
         # Combined metrics: every completed/backlogged item is judged against
         # its OWN product range's target lead time (Thermo vs Cut & Clash),
@@ -277,7 +294,7 @@ class Simulator:
         daily_stats = self._daily_stats(completed_log, target_lookup)
         overall_avg_lead, overall_difot, overdue_backlog = self._overall_metrics(
             completed_log, queues, remake_holding, target_lookup, s.pre_prod_days,
-            s.post_prod_days, H)
+            s.post_prod_days, end_hour)
 
         # Per-route breakdown - same calculations, filtered to one route at a
         # time, so Thermo and Cut & Clash each get their own DIFOT/lead-time
@@ -290,7 +307,7 @@ class Simulator:
             r_daily = self._daily_stats(route_log, route_target)
             r_avg_lead, r_difot, r_overdue = self._overall_metrics(
                 route_log, queues, remake_holding, route_target, s.pre_prod_days,
-                s.post_prod_days, H, route_filter=route)
+                s.post_prod_days, end_hour, route_filter=route)
             by_route[route] = RouteMetrics(
                 route=route, label=label, target_lead_days=s.target_lead_days[route],
                 completed_m2=sum(e["qty"] for e in route_log),
