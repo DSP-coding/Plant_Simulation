@@ -106,7 +106,7 @@ with st.sidebar:
     # Flow order matching how the factory actually runs, CNC/Sanding/MB Sander/
     # Press/Cefla first (the ones you're most likely to have real numbers for).
     capacity_order = ["cnc_thermo", "sanding", "mb_sander", "press_1", "press_2", "edging",
-                       "glue", "despatch", "optimising", "cnc_1536", "eb_drilling"]
+                       "despatch", "optimising", "cnc_1536", "eb_drilling"]
     for sid in capacity_order:
         default_val = round(cfg.default_station_capacity_m2_per_month(sid), 0)
         station_capacity_m2_per_month[sid] = st.number_input(

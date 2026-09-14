@@ -132,8 +132,13 @@ STATIONS: dict[str, Station] = {
                            ideal_ops=2, capacity_m2_per_op_hour=6.5),
     "mb_sander":  Station("mb_sander", "MB Sander", Route.THERMO,
                            ideal_ops=2, capacity_m2_per_op_hour=45.5, num_machines=1),
-    "edging":     Station("edging", "Edging (Cefla glueing)", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=13.0),
+    # [REAL] "Edging" and "Glue" were originally modelled as two separate
+    # stations, but there is only one real physical station here: the Cefla
+    # automated gluing line, confirmed capacity 9,000 m2/month. Rate below is
+    # back-solved from that figure at ideal_ops=2 on the reference schedule
+    # (9000 / (2 * REFERENCE_HOURS_PER_MONTH)).
+    "edging":     Station("edging", "Cefla Automated Gluing Line", Route.THERMO,
+                           ideal_ops=2, capacity_m2_per_op_hour=12.945914844649023),
     # Press 1 and Press 2 are staffed (and edited) independently, but they're
     # two machines doing the same job on one shared pile of work - see
     # PRESS_QUEUE_ID / PRESS_STATIONS below and the dedicated handling in
@@ -142,8 +147,6 @@ STATIONS: dict[str, Station] = {
                            ideal_ops=3, capacity_m2_per_op_hour=6.1, num_machines=1),
     "press_2":    Station("press_2", "Press 2", Route.THERMO,
                            ideal_ops=3, capacity_m2_per_op_hour=6.1, num_machines=1),
-    "glue":       Station("glue", "Glue", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=8.0),
     "despatch":   Station("despatch", "Packing / Despatch", None,
                            ideal_ops=3, capacity_m2_per_op_hour=8.7),
     "admin":      Station("admin", "Admin", None, ideal_ops=1, capacity_m2_per_op_hour=1e9),
@@ -250,7 +253,6 @@ STATION_CREW: dict[str, str] = {
     "edging": "finishing",
     "press_1": "finishing",
     "press_2": "finishing",
-    "glue": "finishing",
     "despatch": "finishing",
     "optimising": "cutclash",
     "cnc_1536": "cutclash",

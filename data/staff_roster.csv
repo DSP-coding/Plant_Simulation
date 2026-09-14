@@ -21,9 +21,9 @@ id,name,home_station,shift,skills,absence_rate_pct,notes
 130,Eric Mabin,eb_drilling,day,,3.8,From staff sheet snapshot (Area: E/B-Drilling)
 384,Faiyaz Ali,eb_drilling,day,,3.8,From staff sheet snapshot (Area: E/B-Drilling)
 405,Lloyd Tadlip,eb_drilling,day,,3.8,From staff sheet snapshot (Area: E/B-Drilling)
-233,Stuart Lyon,edging,aft,,3.8,From staff sheet snapshot (Area: Edging)
-114,Misiluni Malolua,glue,day,,3.8,From staff sheet snapshot (Area: Glue)
-531,Viavia Sese,glue,day,,3.8,From staff sheet snapshot (Area: Glue)
+233,Stuart Lyon,edging,aft,,3.8,"Confirmed: Edging and Glue are the same real station (Cefla automated gluing line) - was listed under ""Edging"" on the staff sheet"
+114,Misiluni Malolua,edging,day,,3.8,"Confirmed: Edging and Glue are the same real station (Cefla automated gluing line) - was listed under ""Glue"" on the staff sheet"
+531,Viavia Sese,edging,day,,3.8,"Confirmed: Edging and Glue are the same real station (Cefla automated gluing line) - was listed under ""Glue"" on the staff sheet"
 203,Diana Savage,optimising,day,,3.8,From staff sheet snapshot (Area: Optimising)
 62,Vili Fonua,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
 118,Rodney Viloria,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
