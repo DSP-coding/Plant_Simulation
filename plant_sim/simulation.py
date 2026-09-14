@@ -236,8 +236,10 @@ class Simulator:
                     bad_qty = batch.qty * (s.remake_rate_pct / 100.0)
                     good_qty = batch.qty - bad_qty
                 if good_qty > 1e-9:
-                    lead_days = s.pre_prod_days + (h - batch.created_hour) / 24.0 + s.post_prod_days
                     route = cfg.PRODUCT_CLASSES[batch.product_class].route
+                    lead_days = (s.pre_prod_days
+                                 + self._days_elapsed(batch.created_hour, h, route)
+                                 + s.post_prod_days)
                     completed_log.append({"day": day_index, "qty": good_qty, "lead_days": lead_days,
                                            "cls": batch.product_class, "route": route})
                     completed_m2_by_class[batch.product_class] += good_qty
@@ -323,6 +325,27 @@ class Simulator:
     # -----------------------------------------------------------------
     # Internals
     # -----------------------------------------------------------------
+
+    def _days_elapsed(self, start_hour: float, end_hour: float, route: str) -> float:
+        """Lead-time day-count between two simulation hours, for the given
+        route. Thermo's real lead-time dashboard measures its 10-day promise
+        in WORKING days (Mon-Fri, weekends excluded), not raw calendar time -
+        see cfg.LEAD_TIME_EXCLUDES_WEEKENDS. Day 0 of the simulation is
+        treated as a Monday, matching the same weekday convention the shift
+        schedules already use (weekday 5/6 = weekend)."""
+        if cfg.LEAD_TIME_EXCLUDES_WEEKENDS.get(route, False):
+            return self._working_days_elapsed(start_hour, end_hour)
+        return max(0.0, (end_hour - start_hour) / 24.0)
+
+    @staticmethod
+    def _working_days_elapsed(start_hour: float, end_hour: float) -> float:
+        if end_hour <= start_hour:
+            return 0.0
+        total_days = (end_hour - start_hour) / 24.0
+        start_day = int(start_hour // 24)
+        end_day = int(end_hour // 24)
+        weekend_days = sum(1 for d in range(start_day, end_day) if d % 7 in (5, 6))
+        return max(0.0, total_days - weekend_days)
 
     def _active_stations(self, weekday: int, hour_of_day: float) -> set[str]:
         active = set()
@@ -489,14 +512,14 @@ class Simulator:
                 route = batch_route(b.product_class)
                 if route_filter and route != route_filter:
                     continue
-                hyp_lead = pre_prod_days + (H - b.created_hour) / 24.0 + post_prod_days
+                hyp_lead = pre_prod_days + self._days_elapsed(b.created_hour, H, route) + post_prod_days
                 if hyp_lead > target_lookup[route]:
                     overdue += b.qty
         for r in remake_holding:
             route = batch_route(r["cls"])
             if route_filter and route != route_filter:
                 continue
-            hyp_lead = pre_prod_days + (H - r["created_hour"]) / 24.0 + post_prod_days
+            hyp_lead = pre_prod_days + self._days_elapsed(r["created_hour"], H, route) + post_prod_days
             if hyp_lead > target_lookup[route]:
                 overdue += r["qty"]
 

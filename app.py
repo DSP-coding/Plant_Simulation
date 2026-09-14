@@ -85,10 +85,13 @@ with st.sidebar:
     intake_m2_for_horizon = st.number_input(f"Intake (m² / {horizon})", min_value=0.0, step=10.0,
                                              key=intake_key)
 
-    st.caption("Cut & Clash (1536) quotes its own lead time, separate from Thermo.")
-    target_lead_thermo = st.number_input("Target lead time - Thermo (days)", min_value=0.0,
+    st.caption("Cut & Clash (1536) quotes its own lead time, separate from Thermo. "
+               "Thermo's target/DIFOT is measured in WORKING days (Mon-Fri, weekends "
+               "excluded), matching the real lead-time dashboard; Cut & Clash still "
+               "uses calendar days pending confirmation of its measurement basis.")
+    target_lead_thermo = st.number_input("Target lead time - Thermo (working days)", min_value=0.0,
                                           value=cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.THERMO], step=0.5)
-    target_lead_cutclash = st.number_input("Target lead time - Cut & Clash (days)", min_value=0.0,
+    target_lead_cutclash = st.number_input("Target lead time - Cut & Clash (calendar days)", min_value=0.0,
                                             value=cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.CUT_AND_CLASH],
                                             step=0.5)
     target_lead_days = {cfg.Route.THERMO: target_lead_thermo, cfg.Route.CUT_AND_CLASH: target_lead_cutclash}
@@ -260,17 +263,20 @@ with tab_results:
         c3.metric("Bottleneck", station_label(bottleneck),
                   f"{result.station_utilisation[bottleneck] * 100:.0f}% utilised")
         c4.metric("Avg lead time (days)",
-                  f"{result.overall_avg_lead_days:.1f}" if result.has_completions else "—")
+                  f"{result.overall_avg_lead_days:.1f}" if result.has_completions else "—",
+                  help="Blended across both ranges - Thermo is measured in working days, "
+                       "Cut & Clash in calendar days (see the per-range breakdown below).")
         c4.metric("DIFOT %", f"{result.overall_difot_pct:.0f}%" if result.has_completions else "—")
 
         st.divider()
         st.subheader("By product range (Thermo vs Cut & Clash) - each judged against its own target lead time")
         route_cols = st.columns(len(result.by_route))
         for col, rm in zip(route_cols, result.by_route.values()):
+            day_unit = "working days" if cfg.LEAD_TIME_EXCLUDES_WEEKENDS.get(rm.route, False) else "calendar days"
             with col:
-                st.markdown(f"**{rm.label}** (target {rm.target_lead_days:.0f}d)")
+                st.markdown(f"**{rm.label}** (target {rm.target_lead_days:.0f} {day_unit})")
                 st.metric("Completed (m²)", f"{rm.completed_m2:,.0f}")
-                st.metric("Avg lead (days)", f"{rm.overall_avg_lead_days:.1f}" if rm.has_completions else "—")
+                st.metric(f"Avg lead ({day_unit})", f"{rm.overall_avg_lead_days:.1f}" if rm.has_completions else "—")
                 st.metric("DIFOT %", f"{rm.overall_difot_pct:.0f}%" if rm.has_completions else "—")
                 st.metric("Overdue backlog (m²)", f"{rm.overdue_backlog_m2:,.0f}")
 
@@ -306,17 +312,18 @@ with tab_results:
         if result.has_completions:
             st.subheader("Lead time & DIFOT by day completed - Thermo vs Cut & Clash")
             for rm in result.by_route.values():
-                st.markdown(f"**{rm.label}** (target {rm.target_lead_days:.0f} days)")
+                day_unit = "working days" if cfg.LEAD_TIME_EXCLUDES_WEEKENDS.get(rm.route, False) else "calendar days"
+                st.markdown(f"**{rm.label}** (target {rm.target_lead_days:.0f} {day_unit})")
                 if not rm.has_completions:
                     st.caption("No completions yet for this range in this horizon.")
                     continue
                 route_daily_df = pd.DataFrame([
-                    {"Day": d.day, "Avg lead (days)": d.avg_lead_days, "DIFOT %": d.difot_pct,
+                    {"Day": d.day, f"Avg lead ({day_unit})": d.avg_lead_days, "DIFOT %": d.difot_pct,
                      "Qty (m²)": d.qty_m2}
                     for d in rm.daily_stats
                 ]).set_index("Day")
                 col_a, col_b = st.columns(2)
-                col_a.line_chart(route_daily_df[["Avg lead (days)"]])
+                col_a.line_chart(route_daily_df[[f"Avg lead ({day_unit})"]])
                 col_b.bar_chart(route_daily_df[["DIFOT %"]])
         else:
             st.info("No completions yet in this horizon - try Week or Month.")

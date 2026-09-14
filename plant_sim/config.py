@@ -294,17 +294,41 @@ REAL_INTAKE_M2 = {
     },
     "month": {
         "combined": {"median": 7232.0, "mean": 7499.0, "p90": 9415.0, "max": 9415.0},
-        "thermo":   {"median": 5829.0, "mean": 6044.0, "p90": 7589.0, "max": 7589.0},
+        # [REAL, updated] Thermo monthly intake m2 now sourced from the live
+        # lead-time-dashboard SQL system (916,299 scan rows, Jan-Aug 2026 full
+        # months; Sep excluded as partial) rather than the product_2026.xlsx
+        # snapshot - this system tracks Order Entry->Optimisation->CNC->
+        # Sanding->Thermoform Press->Packing->Despatch, i.e. Thermo only.
+        # Monthly intake m2: 4948.0, 6332.5, 9569.4, 7126.9, 7842.7, 6895.8,
+        # 7045.2, 6840.8 (Jan-Aug).
+        "thermo":   {"median": 6971.0, "mean": 7075.0, "p90": 9569.0, "max": 9569.0},
         "cutclash": {"median": 1403.0, "mean": 1456.0, "p90": 1828.0, "max": 1828.0},
     },
 }
 
 # [REAL] target lead time is different per product range - Cut & Clash quotes
-# a 7-day lead time; Thermo's target is still the [ASSUMPTION] 10-day
-# placeholder from the old tool pending your confirmation.
+# a 7-day lead time. Thermo's 10-day target is now [REAL, confirmed]: your
+# live lead-time dashboard states it explicitly ("Promise: 10 working days")
+# and measures DIFOT against it in WORKING days (Mon-Fri, weekends excluded) -
+# NOT calendar days. The simulator's lead-time/DIFOT calculations now use the
+# same working-day measure (see Simulator._working_days_elapsed in
+# simulation.py) so this number means the same thing your dashboard means by
+# it - a calendar-day target here would silently judge Thermo ~40% more
+# harshly (10 working days spans ~14 calendar days across two weekends).
 DEFAULT_TARGET_LEAD_DAYS = {
     Route.THERMO: 10.0,
-    Route.CUT_AND_CLASH: 7.0,  # [REAL] per your instruction
+    Route.CUT_AND_CLASH: 7.0,  # [REAL] per your instruction - still calendar days;
+    # Cut & Clash's target wasn't stated as "working days" the way Thermo's
+    # was, so leave as calendar days until confirmed otherwise.
+}
+
+# Whether lead-time/DIFOT day-counts exclude weekends for a given route (see
+# Simulator._working_days_elapsed in simulation.py). [REAL] Thermo's dashboard
+# explicitly measures "working time... weekends excluded"; Cut & Clash's
+# measurement basis hasn't been confirmed, so it stays on plain calendar days.
+LEAD_TIME_EXCLUDES_WEEKENDS = {
+    Route.THERMO: True,
+    Route.CUT_AND_CLASH: False,
 }
 
 
@@ -344,8 +368,11 @@ ALLOCATION_PRESSURE_THRESHOLD_M2 = 150.0
 ALLOCATION_MAX_REBALANCE_MOVES = 6
 
 
-# Remake loop [ASSUMPTION, unchanged from old tool pending real remake-rate
-# history from the Daily Pacer file - it does carry a real "remake % of packing"
-# column once uploaded and parsed].
-DEFAULT_REMAKE_RATE_PCT = 4.4
-DEFAULT_REMAKE_DAYS = 1.0
+# Remake loop. [REAL] Both figures now come from the live lead-time dashboard
+# (Thermo, YTD through 11 Sep 2026): 4,015 of 57,110 complete parts were
+# remakes (7.03%), and remakes take 0.32 days longer on average than
+# non-remakes (8.97 vs 8.64 working days) - that added-time figure is what
+# DEFAULT_REMAKE_DAYS represents here (time the remake loop holds a batch
+# before it re-enters the line), not a from-scratch remake cycle time.
+DEFAULT_REMAKE_RATE_PCT = 7.0
+DEFAULT_REMAKE_DAYS = 0.32
