@@ -56,6 +56,7 @@ plant_sim/allocation.py    Who works where each shift (home station -> floater -
 plant_sim/simulation.py    The hour-by-hour engine that ties it all together
 plant_sim/floor_view.py    The live animated factory-floor visualization
 data/staff_roster.csv      The actual roster - names, skills, shifts, absence rates
+tests/test_plant_sim.py    Regression tests (python -m unittest discover -s tests)
 ```
 
 If you want to change how the factory *behaves*, edit `plant_sim/`. If
@@ -92,10 +93,46 @@ from.
    "Glue" are both the Cefla automated gluing line), and which named
    individuals were on the wrong shift.
 
-The result tracks the real plant closely enough now that its reported
-bottlenecks (Sanding, MB Sander, CNC 1536) match what the live scan data
-actually shows - and the remaining gaps are documented as open questions
-in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
+The result reports the same bottlenecks the live scan data shows (MB
+Sander and CNC 1536), and the remaining gaps are documented as open
+questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
+
+6. **Engine correctness pass** (Sep 2026): a line-by-line review of the
+   engine against how the real floor behaves, fixing everything that was
+   physically wrong rather than just uncalibrated - orders arriving on
+   weekends, parts travelling the whole line in one hour, the allocator
+   being blind to the shared press pile, a plant-wide shift handover hour
+   that didn't match the 8-hour Cut & Clash day, DIFOT not matching the
+   dashboard's definition, and a data-entry slip in the default product
+   mix. Full list in `CALIBRATION_NOTES.md`. The engine now checks its
+   own mass balance every run (intake = completed + WIP, or it refuses to
+   report), validates the roster and every setting up front with readable
+   messages, and ships with a regression test suite.
+
+## How the engine models time (worth knowing before reading results)
+
+- **Hour 0 of every simulated day is the start of the day shift** (think
+  6am), and the afternoon shift follows straight on. Day 0 is a Monday.
+- **Orders arrive on weekdays, during office hours** (the first 8 hours
+  of the day shift), spread evenly - the intake total you enter for the
+  horizon is exactly what arrives inside the reporting window.
+- **Horizons**: day = one Monday, week = 7 days, month = 30 days. Every
+  run is preceded by a 21-day warm-up so queues start at steady state;
+  only the horizon is reported.
+- **Staffing is decided once per shift, per crew.** Each crew hands over
+  from day to afternoon at its own shift length; a cross-skilled person
+  whose crew is off (e.g. Thermo on a Friday) floats to a station that is
+  running.
+- **Stations are processed downstream-first** each hour, so work needs at
+  least one hour per station to travel the line.
+- **Queues are worked oldest-order-first.** Remakes keep their original
+  order date, so they jump the queue on their second pass (which is why
+  real remakes only cost ~0.3 days, not a whole extra lead time).
+- **DIFOT = on-time completed m² / completed m²**, the dashboard's
+  definition. Work still inside the factory past its date is shown
+  separately as *overdue backlog*.
+- **Thermo lead time is in working days** (Mon-Fri, exact to the hour);
+  Cut & Clash is in calendar days until its basis is confirmed.
 
 ## Running it
 
@@ -104,6 +141,18 @@ streamlit run app.py
 ```
 
 Tab 1 (Staff & Skills) edits the roster. Tab 2 (Simulation Results) runs
-the simulation and shows the outcome: KPIs, the live factory-floor
-animation, lead-time/DIFOT by product range, station utilisation, and
-attendance.
+the simulation and shows the outcome: KPIs, a reality check against the
+real plant's monthly figures, staffing-gap warnings, the live
+factory-floor animation, lead-time/DIFOT by product range, station
+utilisation, and attendance.
+
+### Tests
+
+```
+python -m unittest discover -s tests -v
+```
+
+Standard library only (no pytest needed). The suite covers mass balance,
+intake timing, working-day arithmetic, queue ordering, per-crew shift
+handover, allocator rules, roster/settings validation, and a headless run
+of the Streamlit app. Run it after editing anything in `plant_sim/`.

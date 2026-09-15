@@ -2,36 +2,47 @@
 The hourly-stepping factory simulator.
 
 Design, in one paragraph: time advances one hour at a time. Each hour, fresh
-orders arrive (split into product classes by the mix %), each station pulls
-work off the front of its queue based on how many operators are actually
-allocated to it *this shift* (see allocation.py) and pushes finished work to
-the next station in its route. Packed/despatched output splits into "good"
-(counted as completed, with its full lead time) and "remade" (held for
-remake_days, then re-enters the factory at the start of its own route). All
-of this mirrors the original spreadsheet-style tool, but capacity now comes
-from real named people with skills and absences instead of abstract sliders.
+orders arrive (on weekdays, during office hours, split into product classes
+by the mix %), then every station - downstream first, so a part needs at
+least an hour per station - pulls work off the front of its queue based on
+how many operators are actually allocated to it *this shift* (see
+allocation.py) and pushes finished work to the next station in its route.
+Packed/despatched output splits into "good" (counted as completed, with its
+full lead time) and "remade" (held for remake_days, then re-enters the
+factory at the start of its own route, jumping the queue because it keeps
+its original order date). All of this mirrors the original spreadsheet-style
+tool, but capacity now comes from real named people with skills and absences
+instead of abstract sliders.
+
+Time conventions (used consistently everywhere):
+  - hour 0 of every simulated day is the START of the day shift (~6am), and
+    the afternoon shift follows straight on - not midnight.
+  - day 0 is a Monday; weekday 5/6 are the weekend.
+  - the run is (warm-up days + horizon); KPIs count only the horizon.
 """
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 
 from plant_sim import config as cfg
 from plant_sim.allocation import allocate_shift
-from plant_sim.orders import Batch, StationQueue
+from plant_sim.orders import EPS_M2, Batch, StationQueue
 from plant_sim.staff import Roster
+
+ROUTE_LABELS = {cfg.Route.THERMO: "Thermo", cfg.Route.CUT_AND_CLASH: "Cut & Clash"}
 
 
 @dataclass
 class SimulationSettings:
     horizon: str = "month"                 # "day" | "week" | "month"
     # Total intake FOR THE SELECTED HORIZON (e.g. if horizon="week", this is
-    # m2 for the whole week, not m2/day) - see intake_m2_per_hour() below.
-    # This matters: entering a monthly total while the engine assumed it was
-    # a daily rate used to inflate the effective monthly intake ~30x, which
-    # is why completion % looked absurdly low before this was fixed.
-    intake_m2_for_horizon: float = cfg.REAL_INTAKE_M2["month"]["combined"]["median"]
+    # m2 for the whole week, not m2/day). None = the real median for that
+    # horizon (cfg.REAL_INTAKE_M2), resolved in __post_init__ - so a "day"
+    # run never silently gets a month's worth of orders.
+    intake_m2_for_horizon: float | None = None
     mix_pct: dict[str, float] = field(default_factory=lambda: dict(cfg.DEFAULT_MIX_PCT))
     # Separate target lead time per product range - Cut & Clash (1536) quotes
     # 7 days; Thermo defaults to 10 (edit freely).
@@ -55,16 +66,65 @@ class SimulationSettings:
     station_capacity_m2_per_month: dict[str, float] = field(
         default_factory=lambda: {sid: cfg.default_station_capacity_m2_per_month(sid)
                                   for sid in cfg.STATIONS if sid != "admin"})
+    warmup_days: int = cfg.SIMULATION_WARMUP_DAYS
+    buffer_cap_m2: float = cfg.DEFAULT_BUFFER_CAP_M2
 
-    def horizon_hours(self) -> float:
-        if self.horizon == "day":
-            return 24.0
-        if self.horizon == "week":
-            return 168.0
-        return cfg.WEEKS_PER_MONTH * 168.0
+    def __post_init__(self):
+        if self.intake_m2_for_horizon is None and self.horizon in cfg.REAL_INTAKE_M2:
+            self.intake_m2_for_horizon = cfg.REAL_INTAKE_M2[self.horizon]["combined"]["median"]
+        self.validate()
 
-    def intake_m2_per_hour(self) -> float:
-        return self.intake_m2_for_horizon / self.horizon_hours()
+    def validate(self) -> None:
+        """Raise ValueError listing everything wrong with these settings."""
+        p = []
+        if self.horizon not in cfg.HORIZON_DAYS:
+            p.append(f"horizon must be one of {list(cfg.HORIZON_DAYS)}, got {self.horizon!r}")
+        if self.intake_m2_for_horizon is None or self.intake_m2_for_horizon < 0:
+            p.append(f"intake_m2_for_horizon must be >= 0, got {self.intake_m2_for_horizon!r}")
+        unknown = [c for c in self.mix_pct if c not in cfg.PRODUCT_CLASSES]
+        if unknown:
+            p.append(f"mix_pct has unknown product class(es) {unknown}")
+        if any(v < 0 for v in self.mix_pct.values()):
+            p.append("mix_pct percentages cannot be negative")
+        if sum(self.mix_pct.values()) <= 0:
+            p.append("mix_pct must have at least one class with a positive share")
+        for route in cfg.ROUTE_SEQUENCE:
+            if route not in self.target_lead_days:
+                p.append(f"target_lead_days is missing route {route!r}")
+            elif self.target_lead_days[route] < 0:
+                p.append(f"target_lead_days[{route!r}] cannot be negative")
+        if self.pre_prod_days < 0 or self.post_prod_days < 0:
+            p.append("pre_prod_days / post_prod_days cannot be negative")
+        for crew in set(cfg.STATION_CREW.values()):
+            if crew not in self.shift_schedules:
+                p.append(f"shift_schedules is missing crew {crew!r}")
+        if not (0 <= self.remake_rate_pct <= 100):
+            p.append(f"remake_rate_pct must be 0-100, got {self.remake_rate_pct}")
+        if self.remake_days < 0:
+            p.append("remake_days cannot be negative")
+        for sid, v in self.station_capacity_m2_per_month.items():
+            if sid not in cfg.STATIONS:
+                p.append(f"station_capacity_m2_per_month has unknown station {sid!r}")
+            elif v < 0:
+                p.append(f"station_capacity_m2_per_month[{sid!r}] cannot be negative")
+        if self.warmup_days < 0:
+            p.append("warmup_days cannot be negative")
+        if self.buffer_cap_m2 <= 0:
+            p.append("buffer_cap_m2 must be positive")
+        if p:
+            raise ValueError("SimulationSettings problems:\n  - " + "\n  - ".join(p))
+
+    def horizon_days(self) -> int:
+        return cfg.HORIZON_DAYS[self.horizon]
+
+    def horizon_hours(self) -> int:
+        return self.horizon_days() * 24
+
+    def normalised_mix(self) -> dict[str, float]:
+        """The product mix scaled so it sums to exactly 100%, so "intake =
+        X m2" always means X m2 no matter how the sliders were left."""
+        total = sum(self.mix_pct.values())
+        return {c: 100.0 * v / total for c, v in self.mix_pct.items()}
 
 
 @dataclass
@@ -87,10 +147,22 @@ class RouteMetrics:
     overall_difot_pct: float
     overdue_backlog_m2: float
     daily_stats: list[DailyStat]
+    # Remake diagnostics: how much of the completed m2 had been through the
+    # remake loop, and how much longer those took - compare against the real
+    # cfg.REAL_REMAKE_LEAD_PENALTY_DAYS.
+    remake_share_pct: float = 0.0
+    avg_lead_days_remakes: float | None = None
+    avg_lead_days_non_remakes: float | None = None
 
     @property
     def has_completions(self) -> bool:
         return self.completed_m2 > 0
+
+    @property
+    def remake_lead_penalty_days(self) -> float | None:
+        if self.avg_lead_days_remakes is None or self.avg_lead_days_non_remakes is None:
+            return None
+        return self.avg_lead_days_remakes - self.avg_lead_days_non_remakes
 
 
 @dataclass
@@ -108,23 +180,37 @@ class SimulationResult:
     completed_m2_by_class: dict[str, float]
     attendance_log: list[dict]             # one row per (day, operator) - for absenteeism charts
     by_route: dict[str, RouteMetrics]      # per-product-range breakdown (Thermo vs Cut & Clash)
+    # Diagnostics (per station, hours within the reporting window):
+    station_active_hours: dict[str, float]     # crew scheduled to run
+    station_unstaffed_hours: dict[str, float]  # running, work waiting, but nobody on it
+    station_starved_hours: dict[str, float]    # running and staffed, but nothing to do
+    intake_hours_in_window: int
+    notes: list[str] = field(default_factory=list)   # anything the engine wants the reader to know
 
     @property
     def has_completions(self) -> bool:
         return self.cum_completed_m2 > 0
 
+    @property
+    def completion_pct(self) -> float:
+        return 100.0 * self.cum_completed_m2 / self.cum_intake_m2 if self.cum_intake_m2 > 0 else 0.0
+
 
 class Simulator:
     def __init__(self, roster: Roster, settings: SimulationSettings):
+        roster.validate()
+        settings.validate()
         self.roster = roster
         self.settings = settings
         self.rng = random.Random(settings.random_seed)
 
+    # -----------------------------------------------------------------
+    # Main loop
+    # -----------------------------------------------------------------
+
     def run(self) -> SimulationResult:
         s = self.settings
-        H = s.horizon_hours()
-        steps = round(H)
-        total_days = int(H // 24) + 2
+        notes: list[str] = []
 
         # Run a warm-up period before the reporting window so every queue
         # already holds realistic steady-state WIP by the time we start
@@ -132,56 +218,70 @@ class Simulator:
         # keeps running continuously across the boundary (shift schedules,
         # absences, and queue contents all carry through); only the stats
         # collected below get gated on `recording`.
-        warmup_days = round(cfg.SIMULATION_WARMUP_DAYS)
+        warmup_days = int(s.warmup_days)
         warmup_hours = warmup_days * 24
-        end_hour = warmup_hours + steps
+        end_hour = warmup_hours + s.horizon_hours()
+
+        # -- intake schedule: the horizon's total spread evenly over the
+        # intake hours (weekdays, office window) that fall inside the
+        # reporting window. Warm-up days get the same per-hour rate.
+        intake_hours_in_window = sum(1 for h in range(warmup_hours, end_hour) if self._is_intake_hour(h))
+        if intake_hours_in_window > 0:
+            is_intake_hour = self._is_intake_hour
+            intake_per_hour = s.intake_m2_for_horizon / intake_hours_in_window
+        else:
+            # Can only happen with an unusual warm-up length that lands a
+            # one-day horizon on a weekend. Honour the entered intake anyway
+            # by spreading it over every hour of the window.
+            is_intake_hour = lambda h: True  # noqa: E731
+            intake_hours_in_window = end_hour - warmup_hours
+            intake_per_hour = s.intake_m2_for_horizon / intake_hours_in_window
+            notes.append("No weekday intake hours fell inside the reporting window, so intake "
+                         "was spread over every hour of it instead.")
+        mix = s.normalised_mix()
+        if abs(sum(s.mix_pct.values()) - 100.0) > 0.05:
+            notes.append(f"Product mix summed to {sum(s.mix_pct.values()):.1f}% and was normalised "
+                         "to 100% so the intake total is honoured.")
 
         # press_1/press_2 don't get their own queue - they're two independently
         # staffed machines pulling from one shared physical pile of work.
-        queues: dict[str, StationQueue] = {sid: StationQueue() for sid in cfg.STATIONS
-                                            if sid not in cfg.PRESS_STATIONS}
-        queues[cfg.PRESS_QUEUE_ID] = StationQueue()
-        remake_holding: list[dict] = []  # {"release_hour", "created_hour", "qty", "cls"}
+        queue_ids = {cfg.queue_id_for(sid) for sid in cfg.STATIONS}
+        queues: dict[str, StationQueue] = {qid: StationQueue() for qid in queue_ids}
+        # Batches waiting to re-enter the line, as (hour they may re-enter, batch).
+        remake_holding: list[tuple[float, Batch]] = []
 
         # Per-day absence draw, decided once per calendar day and reused for
         # every hour of that day.
         absences_by_day: dict[int, set[str]] = {}
 
-        # Per (day, shift-label) staffing allocation cache - see docstring at
-        # the top of this file for why we snapshot rather than reallocate hourly.
+        # Per (day, shift-label) staffing allocation snapshot - see the note
+        # above cfg.SIMULATION_WARMUP_DAYS for why staffing is decided once
+        # per shift rather than re-shuffled every hour.
         allocation_cache: dict[tuple[int, str], dict[str, str | None]] = {}
 
         trace: list[dict] = []
         attendance_log: list[dict] = []
-        completed_log: list[dict] = []   # {"day", "qty", "lead_days", "cls"}
+        completed_log: list[dict] = []   # {"day", "qty", "lead_days", "cls", "route", "remake"}
         station_out_sum = {sid: 0.0 for sid in cfg.STATIONS}
         station_cap_sum = {sid: 0.0 for sid in cfg.STATIONS}
+        station_active_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_unstaffed_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_starved_hours = {sid: 0.0 for sid in cfg.STATIONS}
         cnc_minutes_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
         completed_m2_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
 
         cum_intake = cum_completed = cum_remade = 0.0
-        intake_per_hour = s.intake_m2_per_hour()
+        # Whole-run totals (warm-up included) for the mass-balance self-check.
+        intake_all = completed_all = 0.0
 
         # Resolve each station's user-edited "capacity in m2/month" into what
         # the engine actually consumes: a per-operator-hour rate for flat-rate
-        # stations, or a scale factor on cut-time for the two CNC stations
-        # (this keeps the S1/S2/S3 relative cut-time ratios intact while
-        # calibrating the absolute level to the capacity you typed in).
-        op_hour_rate: dict[str, float] = {}
-        cnc_scale: dict[str, float] = {}
-        for sid, station in cfg.STATIONS.items():
-            if sid == "admin":
-                continue
-            target_month = s.station_capacity_m2_per_month.get(
-                sid, cfg.default_station_capacity_m2_per_month(sid))
-            if sid in cfg.CNC_STATION_IDS:
-                default_month = cfg.default_cnc_capacity_m2_per_month(station.route)
-                cnc_scale[station.route] = target_month / default_month if default_month > 0 else 1.0
-            else:
-                op_hour_rate[sid] = (target_month / (station.ideal_ops * cfg.REFERENCE_HOURS_PER_MONTH)
-                                      if station.ideal_ops > 0 else station.capacity_m2_per_op_hour)
+        # stations, or a per-class minutes-per-m2 table for the two CNC
+        # stations (this keeps the S1/S2/S3 relative cut-time ratios intact
+        # while calibrating the absolute level to the capacity you typed in).
+        op_hour_rate, cnc_min_per_m2 = self._resolve_capacities()
 
-        for h in range(warmup_hours + steps):
+        for h in range(end_hour):
             day_index = h // 24
             weekday = day_index % 7
             hour_of_day = h % 24
@@ -194,125 +294,146 @@ class Simulator:
             absent_ids = absences_by_day[day_index]
 
             # -- release matured remakes back into their own route's entry station --
-            for r in list(remake_holding):
-                if r["release_hour"] <= h:
-                    entry = cfg.ROUTE_ENTRY_STATION[cfg.PRODUCT_CLASSES[r["cls"]].route]
-                    queues[entry].add(Batch(r["created_hour"], r["qty"], r["cls"]))
-                    remake_holding.remove(r)
+            if remake_holding:
+                still_held = []
+                for release_hour, b in remake_holding:
+                    if release_hour <= h:
+                        entry = cfg.ROUTE_ENTRY_STATION[cfg.PRODUCT_CLASSES[b.product_class].route]
+                        queues[entry].add(b)
+                    else:
+                        still_held.append((release_hour, b))
+                remake_holding = still_held
 
             # -- fresh intake, split by class mix --
-            for cls, pct in s.mix_pct.items():
-                qty = intake_per_hour * pct / 100.0
-                if qty > 1e-9:
-                    entry = cfg.ROUTE_ENTRY_STATION[cfg.PRODUCT_CLASSES[cls].route]
-                    queues[entry].add(Batch(h, qty, cls))
-                if recording:
-                    cum_intake += qty
+            if is_intake_hour(h) and intake_per_hour > 0:
+                for cls, pct in mix.items():
+                    qty = intake_per_hour * pct / 100.0
+                    if qty > EPS_M2:
+                        entry = cfg.ROUTE_ENTRY_STATION[cfg.PRODUCT_CLASSES[cls].route]
+                        queues[entry].add(Batch(h, qty, cls))
+                        intake_all += qty
+                        if recording:
+                            cum_intake += qty
 
-            # -- which stations are actually running this hour? --
-            active_now = self._active_stations(weekday, hour_of_day)
+            # -- which shift (if any) each station's crew is on right now --
+            label_by_station = self._shift_label_by_station(weekday, hour_of_day)
+            active_now = {sid for sid, lbl in label_by_station.items() if lbl is not None}
 
-            # -- staffing allocation snapshot for this shift block --
-            shift_label = "day" if hour_of_day < cfg.ALLOCATION_SHIFT_BOUNDARY_HOUR else "aft"
-            cache_key = (day_index, shift_label)
-            if cache_key not in allocation_cache:
+            # -- staffing allocation snapshots, one per shift label per day --
+            for label in cfg.SHIFT_LABELS:
+                key = (day_index, label)
+                if key in allocation_cache or hour_of_day != self._snapshot_hour(weekday, label):
+                    continue
+                active_for_label = self._active_stations_for_shift(weekday, label)
                 available_ops = [op for op in self.roster.operators
-                                  if op.shift == shift_label and op.id not in absent_ids]
-                queue_snapshot = {sid: q.total_m2() for sid, q in queues.items()}
-                # active_stations for the *snapshot* purpose = anything that
-                # could possibly run this shift label, ignoring the exact hour
-                active_for_snapshot = self._active_stations_for_shift_label(shift_label)
-                assignment = allocate_shift(available_ops, active_for_snapshot, queue_snapshot)
-                allocation_cache[cache_key] = assignment
+                                  if op.shift == label and op.id not in absent_ids]
+                queue_snapshot = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
+                assignment = allocate_shift(available_ops, active_for_label, queue_snapshot)
+                allocation_cache[key] = assignment
                 if recording:
                     for op in self.roster.operators:
+                        if op.shift != label:
+                            continue
                         attendance_log.append({
                             "day": record_day_index, "operator_id": op.id, "operator_name": op.name,
-                            "shift": shift_label,
-                            "status": "absent" if op.id in absent_ids else
-                                      ("working" if op.id in assignment and assignment[op.id] else
-                                       ("idle" if op.shift == shift_label else "off_shift")),
+                            "shift": label,
+                            "status": self._attendance_status(op, weekday, label, absent_ids, assignment),
                             "station": assignment.get(op.id) if op.id not in absent_ids else None,
                         })
-            assignment = allocation_cache[cache_key]
 
-            ops_per_station = self._headcount_per_station(assignment, active_now)
+            ops_per_station = self._headcount_per_station(allocation_cache, day_index, label_by_station)
 
-            hour_out = self._process_hour(
-                h, queues, ops_per_station, active_now, op_hour_rate, cnc_scale,
-                cnc_minutes_by_class, station_out_sum, station_cap_sum)
+            # -- diagnostics: is anyone there, is there anything to do? --
+            if recording:
+                for sid in active_now:
+                    station_active_hours[sid] += 1
+                    waiting = queues[cfg.queue_id_for(sid)].total_m2()
+                    if ops_per_station[sid] == 0 and waiting > EPS_M2:
+                        station_unstaffed_hours[sid] += 1
+                    elif ops_per_station[sid] > 0 and waiting <= EPS_M2:
+                        station_starved_hours[sid] += 1
+
+            hour_out = self._process_hour(queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
+                                          cnc_minutes_by_class, station_out_sum, station_cap_sum)
 
             # -- packing/despatch output -> completed or remade --
-            for batch in hour_out.get("despatch", []):
+            for batch in hour_out.get(cfg.SHARED_TERMINAL_STATION, []):
                 good_qty = batch.qty
                 bad_qty = 0.0
                 if s.remake_enabled:
                     bad_qty = batch.qty * (s.remake_rate_pct / 100.0)
                     good_qty = batch.qty - bad_qty
-                if good_qty > 1e-9:
-                    route = cfg.PRODUCT_CLASSES[batch.product_class].route
-                    lead_days = (s.pre_prod_days
-                                 + self._days_elapsed(batch.created_hour, h, route)
-                                 + s.post_prod_days)
+                route = cfg.PRODUCT_CLASSES[batch.product_class].route
+                if good_qty > EPS_M2:
+                    completed_all += good_qty
                     if recording:
-                        completed_log.append({"day": record_day_index, "qty": good_qty, "lead_days": lead_days,
-                                               "cls": batch.product_class, "route": route})
+                        lead_days = (s.pre_prod_days
+                                     + self._days_elapsed(batch.created_hour, h, route)
+                                     + s.post_prod_days)
+                        completed_log.append({"day": record_day_index, "qty": good_qty,
+                                              "lead_days": lead_days, "cls": batch.product_class,
+                                              "route": route, "remake": batch.is_remake})
                         completed_m2_by_class[batch.product_class] += good_qty
                         cum_completed += good_qty
-                if bad_qty > 1e-9:
-                    remake_holding.append({"release_hour": h + s.remake_days * 24,
-                                            "created_hour": batch.created_hour,
-                                            "qty": bad_qty, "cls": batch.product_class})
+                if bad_qty > EPS_M2:
+                    remake = Batch(batch.created_hour, bad_qty, batch.product_class, is_remake=True)
+                    remake_holding.append((h + s.remake_days * 24.0, remake))
                     if recording:
                         cum_remade += bad_qty
 
-            # The shared "press" queue isn't a station in its own right (see
-            # PRESS_QUEUE_ID) - report its level under both press_1 and
-            # press_2 so charts/floor-view can show "buffer waiting for a
-            # press" against each machine's own box, instead of an orphaned
-            # "press" entry that isn't in cfg.STATIONS at all.
             if recording:
-                buf = {sid: q.total_m2() for sid, q in queues.items()}
-                press_buf = buf.pop(cfg.PRESS_QUEUE_ID)
-                for press_sid in cfg.PRESS_STATIONS:
-                    buf[press_sid] = press_buf
-
+                # The shared "press" queue isn't a station in its own right
+                # (see PRESS_QUEUE_ID) - report its level under both press_1
+                # and press_2 so charts/floor-view can show "buffer waiting
+                # for a press" against each machine's own box.
+                buf = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
                 trace.append({
                     "h": h - warmup_hours,
                     "buf": buf,
                     "out": {sid: sum(b.qty for b in batches) for sid, batches in hour_out.items()},
                     "ops": ops_per_station,
                     "active": sorted(active_now),
-                    "remake_held": sum(r["qty"] for r in remake_holding),
+                    "shift": label_by_station,
+                    "remake_held": sum(b.qty for _, b in remake_holding),
                     "cum_intake": cum_intake, "cum_completed": cum_completed, "cum_remade": cum_remade,
                 })
+
+        # -- mass balance: nothing is ever created or lost inside the engine --
+        wip = sum(q.total_m2() for q in queues.values()) + sum(b.qty for _, b in remake_holding)
+        imbalance = intake_all - (completed_all + wip)
+        if abs(imbalance) > 1e-6 * max(1.0, intake_all):
+            raise RuntimeError(f"Simulation mass balance broken: intake {intake_all:.6f} != "
+                               f"completed {completed_all:.6f} + WIP {wip:.6f} (diff {imbalance:.6g})")
 
         # Combined metrics: every completed/backlogged item is judged against
         # its OWN product range's target lead time (Thermo vs Cut & Clash),
         # then pooled together for the headline KPIs.
-        target_lookup = {e_route: e_target for e_route, e_target in s.target_lead_days.items()}
-        daily_stats = self._daily_stats(completed_log, target_lookup)
-        overall_avg_lead, overall_difot, overdue_backlog = self._overall_metrics(
-            completed_log, queues, remake_holding, target_lookup, s.pre_prod_days,
-            s.post_prod_days, end_hour)
+        daily_stats = self._daily_stats(completed_log, s.target_lead_days)
+        overall_avg_lead, overall_difot = self._lead_and_difot(completed_log, s.target_lead_days)
+        overdue_backlog = self._overdue_backlog(queues, remake_holding, s.target_lead_days, end_hour)
 
         # Per-route breakdown - same calculations, filtered to one route at a
         # time, so Thermo and Cut & Clash each get their own DIFOT/lead-time
         # judged against their own target.
         by_route: dict[str, RouteMetrics] = {}
-        route_labels = {cfg.Route.THERMO: "Thermo", cfg.Route.CUT_AND_CLASH: "Cut & Clash"}
-        for route, label in route_labels.items():
+        for route, label in ROUTE_LABELS.items():
             route_log = [e for e in completed_log if e["route"] == route]
-            route_target = {route: s.target_lead_days[route]}
-            r_daily = self._daily_stats(route_log, route_target)
-            r_avg_lead, r_difot, r_overdue = self._overall_metrics(
-                route_log, queues, remake_holding, route_target, s.pre_prod_days,
-                s.post_prod_days, end_hour, route_filter=route)
+            r_avg_lead, r_difot = self._lead_and_difot(route_log, s.target_lead_days)
+            r_overdue = self._overdue_backlog(queues, remake_holding, s.target_lead_days, end_hour,
+                                              route_filter=route)
+            remakes = [e for e in route_log if e["remake"]]
+            firsts = [e for e in route_log if not e["remake"]]
+            total_qty = sum(e["qty"] for e in route_log)
+            remake_qty = sum(e["qty"] for e in remakes)
             by_route[route] = RouteMetrics(
                 route=route, label=label, target_lead_days=s.target_lead_days[route],
-                completed_m2=sum(e["qty"] for e in route_log),
+                completed_m2=total_qty,
                 overall_avg_lead_days=r_avg_lead, overall_difot_pct=r_difot,
-                overdue_backlog_m2=r_overdue, daily_stats=r_daily,
+                overdue_backlog_m2=r_overdue,
+                daily_stats=self._daily_stats(route_log, s.target_lead_days),
+                remake_share_pct=(100.0 * remake_qty / total_qty) if total_qty > 0 else 0.0,
+                avg_lead_days_remakes=self._weighted_avg_lead(remakes),
+                avg_lead_days_non_remakes=self._weighted_avg_lead(firsts),
             )
 
         # Utilisation = output / available capacity, both in the same units.
@@ -320,11 +441,10 @@ class Simulator:
         # time depends on product class) rather than m2, so their utilisation
         # has to compare minutes-used to minutes-available, not m2 to minutes.
         utilisation = {}
-        for sid in cfg.STATIONS:
+        for sid, station in cfg.STATIONS.items():
             if sid in cfg.CNC_STATION_IDS:
-                route = cfg.STATIONS[sid].route
                 minutes_used = sum(cnc_minutes_by_class[c] for c, pc in cfg.PRODUCT_CLASSES.items()
-                                    if pc.route == route)
+                                    if pc.route == station.route)
                 utilisation[sid] = minutes_used / station_cap_sum[sid] if station_cap_sum[sid] > 0 else 0.0
             else:
                 utilisation[sid] = (station_out_sum[sid] / station_cap_sum[sid]
@@ -337,166 +457,216 @@ class Simulator:
             overall_difot_pct=overall_difot, station_utilisation=utilisation,
             completed_m2_by_class=completed_m2_by_class, attendance_log=attendance_log,
             by_route=by_route,
+            station_active_hours=station_active_hours,
+            station_unstaffed_hours=station_unstaffed_hours,
+            station_starved_hours=station_starved_hours,
+            intake_hours_in_window=intake_hours_in_window,
+            notes=notes,
         )
 
     # -----------------------------------------------------------------
-    # Internals
+    # Time helpers
     # -----------------------------------------------------------------
+
+    @staticmethod
+    def _is_intake_hour(h: int) -> bool:
+        weekday = (h // 24) % 7
+        if cfg.INTAKE_WEEKDAYS_ONLY and weekday >= 5:
+            return False
+        hod = h % 24
+        return cfg.INTAKE_WINDOW_HOURS[0] <= hod < cfg.INTAKE_WINDOW_HOURS[1]
 
     def _days_elapsed(self, start_hour: float, end_hour: float, route: str) -> float:
         """Lead-time day-count between two simulation hours, for the given
         route. Thermo's real lead-time dashboard measures its 10-day promise
         in WORKING days (Mon-Fri, weekends excluded), not raw calendar time -
-        see cfg.LEAD_TIME_EXCLUDES_WEEKENDS. Day 0 of the simulation is
-        treated as a Monday, matching the same weekday convention the shift
-        schedules already use (weekday 5/6 = weekend)."""
+        see cfg.LEAD_TIME_EXCLUDES_WEEKENDS. Day 0 of the simulation is a
+        Monday, matching the weekday convention the shift schedules use."""
         if cfg.LEAD_TIME_EXCLUDES_WEEKENDS.get(route, False):
             return self._working_days_elapsed(start_hour, end_hour)
         return max(0.0, (end_hour - start_hour) / 24.0)
 
     @staticmethod
-    def _working_days_elapsed(start_hour: float, end_hour: float) -> float:
+    def _working_hours_before(t: float) -> float:
+        """Cumulative Mon-Fri hours between simulation hour 0 (a Monday
+        morning) and hour t. Exact for any fractional t - a batch created
+        on Friday afternoon and finished Saturday morning is charged only
+        the Friday part."""
+        if t <= 0:
+            return 0.0
+        weeks = math.floor(t / 168.0)
+        remainder = t - weeks * 168.0
+        return weeks * 120.0 + min(remainder, 120.0)
+
+    @classmethod
+    def _working_days_elapsed(cls, start_hour: float, end_hour: float) -> float:
         if end_hour <= start_hour:
             return 0.0
-        total_days = (end_hour - start_hour) / 24.0
-        start_day = int(start_hour // 24)
-        end_day = int(end_hour // 24)
-        weekend_days = sum(1 for d in range(start_day, end_day) if d % 7 in (5, 6))
-        return max(0.0, total_days - weekend_days)
+        return (cls._working_hours_before(end_hour) - cls._working_hours_before(start_hour)) / 24.0
 
-    def _active_stations(self, weekday: int, hour_of_day: float) -> set[str]:
-        active = set()
+    # -----------------------------------------------------------------
+    # Shifts and staffing
+    # -----------------------------------------------------------------
+
+    def _shift_label_by_station(self, weekday: int, hour_of_day: float) -> dict[str, str | None]:
+        """Which shift each station's crew is on at this hour ('day', 'aft',
+        or None if that crew isn't running)."""
+        out = {}
         for sid, crew_name in cfg.STATION_CREW.items():
             sched = self.settings.shift_schedules[crew_name]
-            if sched.active_on_weekday(weekday) and sched.shift_at(hour_of_day) is not None:
-                active.add(sid)
-        return active
-
-    def _active_stations_for_shift_label(self, shift_label: str) -> set[str]:
-        """Stations whose crew *could* run during this shift label, any weekday."""
-        active = set()
-        for sid, crew_name in cfg.STATION_CREW.items():
-            sched = self.settings.shift_schedules[crew_name]
-            if shift_label == "day" and sched.day_hrs > 0:
-                active.add(sid)
-            elif shift_label == "aft" and sched.aft_enabled and sched.aft_hrs > 0:
-                active.add(sid)
-        return active
-
-    @staticmethod
-    def _headcount_per_station(assignment: dict[str, str | None],
-                                active_now: set[str]) -> dict[str, int]:
-        counts = {sid: 0 for sid in cfg.STATIONS}
-        for station in assignment.values():
-            if station in active_now:
-                counts[station] += 1
-        return counts
-
-    def _process_hour(self, h, queues, ops_per_station, active_now, op_hour_rate, cnc_scale,
-                       cnc_minutes_by_class, station_out_sum, station_cap_sum):
-        """Run one simulated hour of production through every station, in
-        flow order, and return {station_id: [output batches]}.
-
-        Both routes' last station feeds into the shared "despatch" queue, so
-        despatch is processed once at the end, not once per route (it has a
-        single, shared headcount - splitting it per-route would double-count
-        capacity).
-        """
-        out: dict[str, list[Batch]] = {}
-        despatch_sid = cfg.SHARED_TERMINAL_STATION
-
-        for route, sequence in cfg.ROUTE_SEQUENCE.items():
-            # Thermo's last station (edging) feeds the shared press queue,
-            # not despatch directly - Cut & Clash has no press stage, so its
-            # last station (eb_drilling) goes straight to despatch as before.
-            route_terminal = cfg.PRESS_QUEUE_ID if route == cfg.Route.THERMO else despatch_sid
-            for i, sid in enumerate(sequence):
-                station = cfg.STATIONS[sid]
-                ops = ops_per_station[sid] if sid in active_now else 0
-                next_sid = sequence[i + 1] if i + 1 < len(sequence) else route_terminal
-                room = queues[next_sid].headroom(cfg.DEFAULT_BUFFER_CAP_M2)
-
-                if sid in cfg.CNC_STATION_IDS:
-                    produced = self._run_cnc(sid, station, ops, room, queues[sid], cnc_scale[route],
-                                              cnc_minutes_by_class, station_cap_sum)
-                else:
-                    capacity = self._flat_capacity_m2_per_hour(sid, station, ops, op_hour_rate[sid])
-                    station_cap_sum[sid] += capacity
-                    capacity = min(capacity, room)
-                    produced = queues[sid].consume_flat_rate(capacity)
-
-                out[sid] = produced
-                station_out_sum[sid] += sum(b.qty for b in produced)
-                for b in produced:
-                    queues[next_sid].add(b)
-
-        # -- press: two independently-staffed machines pulling from one
-        # shared pile of work, in turn, both feeding the same despatch queue.
-        # Order between them doesn't matter physically (both draw from the
-        # same FIFO queue this same hour); it just decides who gets first
-        # crack at the oldest batch if capacity is tight.
-        press_room = queues[despatch_sid].headroom(cfg.DEFAULT_BUFFER_CAP_M2)
-        for press_sid in cfg.PRESS_STATIONS:
-            press_station = cfg.STATIONS[press_sid]
-            ops = ops_per_station[press_sid] if press_sid in active_now else 0
-            capacity = self._flat_capacity_m2_per_hour(press_sid, press_station, ops, op_hour_rate[press_sid])
-            station_cap_sum[press_sid] += capacity
-            capacity = min(capacity, press_room)
-            produced = queues[cfg.PRESS_QUEUE_ID].consume_flat_rate(capacity)
-            out[press_sid] = produced
-            station_out_sum[press_sid] += sum(b.qty for b in produced)
-            press_room -= sum(b.qty for b in produced)
-            for b in produced:
-                queues[despatch_sid].add(b)
-
-        # -- shared despatch/packing station, processed once --
-        despatch_station = cfg.STATIONS[despatch_sid]
-        despatch_ops = ops_per_station[despatch_sid] if despatch_sid in active_now else 0
-        despatch_capacity = self._flat_capacity_m2_per_hour(despatch_sid, despatch_station, despatch_ops,
-                                                              op_hour_rate[despatch_sid])
-        station_cap_sum[despatch_sid] += despatch_capacity
-        despatch_out = queues[despatch_sid].consume_flat_rate(despatch_capacity)
-        out[despatch_sid] = despatch_out
-        station_out_sum[despatch_sid] += sum(b.qty for b in despatch_out)
-
+            out[sid] = sched.shift_at(hour_of_day) if sched.active_on_weekday(weekday) else None
         return out
 
+    def _active_stations_for_shift(self, weekday: int, shift_label: str) -> set[str]:
+        """Stations whose crew runs this shift label on this weekday."""
+        active = set()
+        for sid, crew_name in cfg.STATION_CREW.items():
+            sched = self.settings.shift_schedules[crew_name]
+            if sched.active_on_weekday(weekday) and sched.offers_shift(shift_label):
+                active.add(sid)
+        return active
+
+    def _snapshot_hour(self, weekday: int, shift_label: str) -> int:
+        """The hour-of-day at which this day's allocation for `shift_label`
+        is decided: when the first crew starts that shift. If no crew runs
+        that shift today at all, it's decided at hour 0 (everyone on it is
+        simply logged as idle / on a day off)."""
+        starts = [
+            self.settings.shift_schedules[crew].shift_start_hour(shift_label)
+            for crew in set(cfg.STATION_CREW.values())
+            if (self.settings.shift_schedules[crew].active_on_weekday(weekday)
+                and self.settings.shift_schedules[crew].offers_shift(shift_label))
+        ]
+        return int(math.floor(min(starts))) if starts else 0
+
+    def _attendance_status(self, op, weekday: int, label: str, absent_ids: set[str],
+                           assignment: dict[str, str | None]) -> str:
+        if op.id in absent_ids:
+            return "absent"
+        if assignment.get(op.id):
+            return "working"
+        home_sched = self.settings.shift_schedules[cfg.STATION_CREW[op.home_station]]
+        if not home_sched.active_on_weekday(weekday):
+            return "day_off"       # their crew doesn't work this weekday
+        return "idle"              # rostered on, but nothing they can do is running
+
     @staticmethod
-    def _flat_capacity_m2_per_hour(sid: str, station, ops: int, rate_m2_per_op_hour: float) -> float:
+    def _headcount_per_station(allocation_cache, day_index: int,
+                                label_by_station: dict[str, str | None]) -> dict[str, int]:
+        """How many people are on each station THIS hour: read from the
+        snapshot for whichever shift that station's own crew is on."""
+        counts = {sid: 0 for sid in cfg.STATIONS}
+        for sid, label in label_by_station.items():
+            if label is None:
+                continue
+            assignment = allocation_cache.get((day_index, label))
+            if not assignment:
+                continue
+            counts[sid] = sum(1 for st in assignment.values() if st == sid)
+        return counts
+
+    # -----------------------------------------------------------------
+    # Capacity
+    # -----------------------------------------------------------------
+
+    def _resolve_capacities(self) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+        """Turn the editable 'm2/month at ideal staffing' numbers into engine
+        rates. Returns (m2 per operator-hour by flat-rate station,
+        machine-minutes per m2 by class for each CNC station)."""
+        s = self.settings
+        op_hour_rate: dict[str, float] = {}
+        cnc_min_per_m2: dict[str, dict[str, float]] = {}
+        for sid, station in cfg.STATIONS.items():
+            if sid == "admin":
+                continue
+            target_month = s.station_capacity_m2_per_month.get(
+                sid, cfg.default_station_capacity_m2_per_month(sid))
+            if sid in cfg.CNC_STATION_IDS:
+                default_month = cfg.default_cnc_capacity_m2_per_month(station.route)
+                # scale > 1 means the edited capacity is HIGHER than the
+                # default, i.e. the machine cuts faster than the default
+                # per-class times - so time-per-m2 shrinks by the same
+                # factor. scale == 0 means "this CNC is down".
+                scale = target_month / default_month if default_month > 0 else 1.0
+                cnc_min_per_m2[sid] = {
+                    cls: (cfg.cnc_min_per_m2(cls) / scale if scale > 0 else math.inf)
+                    for cls, pc in cfg.PRODUCT_CLASSES.items() if pc.route == station.route
+                }
+            else:
+                op_hour_rate[sid] = (target_month / (station.ideal_ops * cfg.REFERENCE_HOURS_PER_MONTH)
+                                      if station.ideal_ops > 0 else station.capacity_m2_per_op_hour)
+        return op_hour_rate, cnc_min_per_m2
+
+    @staticmethod
+    def _flat_capacity_m2_per_hour(station: cfg.Station, ops: int, rate_m2_per_op_hour: float) -> float:
         if ops <= 0:
             return 0.0
-        if sid == "mb_sander":
-            full_rate = station.ideal_ops * rate_m2_per_op_hour
-            if ops == 1:
-                return full_rate * 0.45  # [ASSUMPTION, from original tool]:
-                # one operator can run the MB Sander but only at ~45% of the
-                # two-operator (infeed+outfeed) rate.
-            return full_rate * min(1.0, ops / station.ideal_ops)
+        if station.id == "mb_sander" and ops == 1:
+            # One person can run the MB Sander alone, but slowly.
+            return station.ideal_ops * rate_m2_per_op_hour * cfg.MB_SANDER_SINGLE_OP_FACTOR
+        if station.machine_bound:
+            ops = min(ops, station.ideal_ops)   # the machine can't go faster than full rate
         return ops * rate_m2_per_op_hour
 
-    def _run_cnc(self, sid, station, ops, room, queue, scale, cnc_minutes_by_class, station_cap_sum):
-        machines_manned = min(ops, station.num_machines)
-        available_minutes = machines_manned * 60.0 * cfg.CNC_UTILISATION
-        station_cap_sum[sid] += available_minutes  # minutes, not m2 - utilisation is minutes-based for CNC
-        route = station.route
-        # `scale` > 1 means the edited capacity is HIGHER than the default
-        # implied capacity, i.e. the machine cuts faster than the default
-        # per-class times - so time-per-m2 shrinks by the same factor. This
-        # preserves the relative S1(7)/S2(14)/S3(50) min/board ratios while
-        # calibrating the absolute level to the capacity you typed in.
-        min_per_m2 = {
-            cls: ((pc.cnc_min_per_board + cfg.CNC_SETUP_MIN_PER_BOARD) / cfg.BOARD_M2) / scale
-            for cls, pc in cfg.PRODUCT_CLASSES.items() if pc.route == route
-        }
-        produced = queue.consume_cnc(available_minutes, room, min_per_m2)
-        for b in produced:
-            cnc_minutes_by_class[b.product_class] += b.qty * min_per_m2[b.product_class]
-        return produced
+    # -----------------------------------------------------------------
+    # One hour of production
+    # -----------------------------------------------------------------
 
-    def _daily_stats(self, completed_log, target_lookup: dict[str, float]) -> list[DailyStat]:
-        """target_lookup maps route -> target lead days; each entry is judged
-        against the target for ITS OWN route, so combined and per-route calls
-        both just work by passing either the full lookup or a single-route one."""
+    def _process_hour(self, queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
+                       cnc_minutes_by_class, station_out_sum, station_cap_sum) -> dict[str, list[Batch]]:
+        """Run one simulated hour of production through every station, in
+        cfg.PROCESSING_ORDER (downstream first), and return
+        {station_id: [output batches]}.
+
+        Both routes' last stations and both presses feed the shared
+        "despatch" queue; despatch itself is processed once (it has a single
+        shared headcount - splitting it per route would double-count
+        capacity). Despatch's output is the factory's finished output.
+        """
+        out: dict[str, list[Batch]] = {}
+        for sid in cfg.PROCESSING_ORDER:
+            station = cfg.STATIONS[sid]
+            ops = ops_per_station[sid]
+            queue = queues[cfg.queue_id_for(sid)]
+            next_qid = cfg.downstream_queue_for(sid)
+            room = queues[next_qid].headroom(self.settings.buffer_cap_m2) if next_qid else math.inf
+
+            if sid in cfg.CNC_STATION_IDS:
+                machines_manned = min(ops, station.num_machines)
+                available_minutes = machines_manned * 60.0 * cfg.CNC_UTILISATION
+                station_cap_sum[sid] += available_minutes  # minutes, not m2 - see utilisation
+                if any(math.isinf(v) for v in cnc_min_per_m2[sid].values()):
+                    available_minutes = 0.0                # this CNC has been set to zero capacity
+                produced = queue.consume_cnc(available_minutes, room, cnc_min_per_m2[sid])
+                for b in produced:
+                    cnc_minutes_by_class[b.product_class] += b.qty * cnc_min_per_m2[sid][b.product_class]
+            else:
+                capacity = self._flat_capacity_m2_per_hour(station, ops, op_hour_rate[sid])
+                station_cap_sum[sid] += capacity
+                produced = queue.consume_flat_rate(min(capacity, room))
+
+            out[sid] = produced
+            station_out_sum[sid] += sum(b.qty for b in produced)
+            if next_qid is not None:
+                for b in produced:
+                    queues[next_qid].add(b)
+        return out
+
+    # -----------------------------------------------------------------
+    # KPIs
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _weighted_avg_lead(entries: list[dict]) -> float | None:
+        qty = sum(e["qty"] for e in entries)
+        if qty <= 0:
+            return None
+        return sum(e["lead_days"] * e["qty"] for e in entries) / qty
+
+    @staticmethod
+    def _daily_stats(completed_log, target_lookup: dict[str, float]) -> list[DailyStat]:
+        """Each entry is judged against the target for ITS OWN route, so
+        combined and per-route calls both just work."""
         by_day: dict[int, dict] = {}
         for e in completed_log:
             d = by_day.setdefault(e["day"], {"qty": 0.0, "lead_sum": 0.0, "on_time": 0.0})
@@ -510,36 +680,35 @@ class Simulator:
             for d, v in sorted(by_day.items())
         ]
 
-    def _overall_metrics(self, completed_log, queues, remake_holding, target_lookup: dict[str, float],
-                          pre_prod_days, post_prod_days, H, route_filter: str | None = None):
+    @staticmethod
+    def _lead_and_difot(completed_log, target_lookup: dict[str, float]) -> tuple[float, float]:
+        """m2-weighted average lead time, and DIFOT = share of COMPLETED m2
+        that met its route's target. This is the same definition the real
+        dashboard uses (delivered on time / delivered); work still sitting in
+        the factory past its date is reported separately as overdue backlog,
+        not folded into DIFOT - it will count as late when it does complete."""
         lead_sum = on_time_sum = qty_sum = 0.0
         for e in completed_log:
             lead_sum += e["lead_days"] * e["qty"]
             qty_sum += e["qty"]
             if e["lead_days"] <= target_lookup[e["route"]]:
                 on_time_sum += e["qty"]
-        overall_avg_lead = lead_sum / qty_sum if qty_sum > 0 else 0.0
+        if qty_sum <= 0:
+            return 0.0, 0.0
+        return lead_sum / qty_sum, 100.0 * on_time_sum / qty_sum
 
-        def batch_route(product_class: str) -> str:
-            return cfg.PRODUCT_CLASSES[product_class].route
-
+    def _overdue_backlog(self, queues, remake_holding, target_lookup: dict[str, float],
+                         now_hour: float, route_filter: str | None = None) -> float:
+        """m2 still inside the factory (queues + remake loop) that would
+        already miss its target even if it were finished this instant."""
+        s = self.settings
         overdue = 0.0
-        for q in queues.values():
-            for b in q.batches:
-                route = batch_route(b.product_class)
-                if route_filter and route != route_filter:
-                    continue
-                hyp_lead = pre_prod_days + self._days_elapsed(b.created_hour, H, route) + post_prod_days
-                if hyp_lead > target_lookup[route]:
-                    overdue += b.qty
-        for r in remake_holding:
-            route = batch_route(r["cls"])
+        in_factory = [b for q in queues.values() for b in q.batches] + [b for _, b in remake_holding]
+        for b in in_factory:
+            route = cfg.PRODUCT_CLASSES[b.product_class].route
             if route_filter and route != route_filter:
                 continue
-            hyp_lead = pre_prod_days + self._days_elapsed(r["created_hour"], H, route) + post_prod_days
+            hyp_lead = s.pre_prod_days + self._days_elapsed(b.created_hour, now_hour, route) + s.post_prod_days
             if hyp_lead > target_lookup[route]:
-                overdue += r["qty"]
-
-        denom = qty_sum + overdue
-        overall_difot = (100.0 * on_time_sum / denom) if denom > 0 else (100.0 if qty_sum > 0 else 0.0)
-        return overall_avg_lead, overall_difot, overdue
+                overdue += b.qty
+        return overdue

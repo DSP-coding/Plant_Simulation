@@ -36,12 +36,15 @@ it and shows the outcome, including a live animated factory-floor view.
 | CNC (Thermo) | cut-time model, 5 machines | ASSUMPTION | S1/S2/S3 min-per-board guesses carried from the old tool |
 | CNC 1536 (Cut & Clash) | cut-time model, 1 machine | ASSUMPTION | same as above |
 | Edge Band/Drilling | 6.5 m²/op-hr | ASSUMPTION | no matching real WorkArea checkpoint in the export |
-| Manual Sanding | 6.5 m²/op-hr | ASSUMPTION (deliberately generous) | not the real constraint - see MB Sander |
+| Manual Sanding | 11.52 m²/op-hr | **REAL-derived lower bound** | the combined "Sanding" checkpoint proves ≥8,007 m²/month passes through manual sanding *and* the MB Sander, so manual sanding can do at least that at its 2-person crew (the old 6.5 capped it at ~4,500 m²/month and made it the plant's worst bottleneck - see session 3) |
 | MB Sander | 11.52 m²/op-hr | **REAL** | everything sanded is fed through this one machine - real ceiling ÷ ideal_ops=2 on reference hours |
 | Cefla Automated Gluing Line | 12.95 m²/op-hr | **REAL** | confirmed capacity 9,000 m²/month (was wrongly split into two stations "Edging" + "Glue" - merged) |
 | Press 1 / Press 2 | 5.37 m²/op-hr each | **REAL** | 90th-pct daily "Thermoform Press" scan total (can't tell the two machines apart in the data) |
 | Despatch/Packing | 9.12 m²/op-hr | **REAL** | average of the real "Packing" and "Despatch" checkpoints |
-| Remake rate/days | 7.03% / 0.32 days | **REAL** | live lead-time dashboard |
+| Remake rate / lead-time penalty | 7.03% / +0.32 working days | **REAL** | live lead-time dashboard. The 0.32 is the *total* extra time a remake takes; the engine's `remake_days` is the hold before re-entry, and the results tab reports the simulated penalty next to the real one |
+| Thermo avg lead time | 8.66 working days | **REAL** | live lead-time dashboard (8.64 non-remake / 8.97 remake) - used by the reality-check panel |
+| Product mix (Thermo / Cut & Clash) | 80.6% / 19.4% | **REAL** | product_2026.xlsx. S1/S2/S3 split within Thermo still ASSUMPTION |
+| Intake timing | weekdays, first 8 h of day shift | ASSUMPTION | office hours; was spread over all 168 h/week before session 3 |
 | Target lead time - Thermo | 10 working days | **REAL** | confirmed, excludes weekends |
 | Target lead time - Cut & Clash | 7 calendar days | UNCONFIRMED | assumed calendar days pending confirmation |
 
@@ -83,7 +86,133 @@ down to a low of 29% (mid-fix, when MB Sander was wrongly the
 bottleneck) and has settled at **~70%**, with CNC 1536 now the clearest
 constraint (99% utilised).
 
+## Session 3 - engine correctness pass (16 Sep 2026)
+
+A line-by-line review of the engine for things that were *physically
+wrong* (as opposed to uncalibrated). Every item below changed results;
+none of them is a tuning knob.
+
+**Modelling errors fixed**
+
+1. **Orders arrived around the clock, 7 days a week.** Intake was spread
+   over every hour of the horizon, so ~29% of each week's orders landed
+   on the weekend and aged before anyone could touch them. Cut & Clash's
+   calendar-day lead time was 16 days (0% DIFOT) purely from this. Orders
+   now arrive on weekdays during office hours (`INTAKE_WEEKDAYS_ONLY`,
+   `INTAKE_WINDOW_HOURS`), and the entered intake is spread over exactly
+   the intake hours inside the reporting window, so the Intake KPI always
+   equals what you typed. Month horizon is now a flat 30 days for the same
+   reason (4.345 weeks ended mid-day).
+2. **Parts could travel the whole line in one hour.** Stations were
+   processed upstream-first, so a board cut at 9am could be sanded, MB-
+   sanded, glued, pressed and packed by 9:59. Now downstream-first
+   (`PROCESSING_ORDER`): at least one hour per station.
+3. **One plant-wide shift handover at hour 10.** The Cut & Clash crews
+   hand over at hour 8, so their day people were credited with hours 8-9
+   and the afternoon operator lost them. Each station now reads the
+   allocation for whichever shift *its own crew* is on.
+4. **Crews' days off were invisible to the allocator.** The shift snapshot
+   ignored the weekday, so on a Friday (Thermo crews off) a cross-skilled
+   Thermo CNC operator sat "working" on an idle CNC instead of floating to
+   CNC 1536. Snapshots are now weekday-aware; the attendance log gained a
+   `day_off` status so this is visible.
+5. **The allocator could not see the shared press pile.** Backlog pressure
+   was looked up per station id, and the presses' work lives under the
+   shared "press" queue - so Press 1 and Press 2 always read as having
+   zero backlog, were never helped, and were treated as the quietest
+   stations to poach from. Fixed via `cfg.queue_id_for()`; pressure pools
+   both presses' people against the one pile.
+6. **Floaters were parked on full machines.** Sending a 2nd person to the
+   single-machine CNC 1536 (or a 6th to five Thermo CNCs) added nothing but
+   showed as "working". `Station.max_useful_ops` now caps this; surplus
+   people are the first to be moved elsewhere; nobody is moved twice in a
+   shift (the old loop could ping-pong one person back and forth).
+7. **Extra hands made machines run faster.** A 3rd person on the Cefla
+   line or the MB Sander increased its rate linearly. `machine_bound`
+   stations (MB Sander, Cefla) now cap at their crew rate. Presses are
+   deliberately left linear because their real rate was derived per
+   op-hour across 8 people - flip `machine_bound` once a per-press cycle
+   time is known.
+8. **DIFOT didn't mean what the dashboard means.** It was on-time /
+   (completed + overdue-in-WIP), which double counts: work still in the
+   factory would be counted late again when it eventually completed. Now
+   on-time completed / completed, with overdue backlog reported separately.
+9. **Remakes went to the back of the queue.** A remake re-entered the line
+   behind three weeks of newer work and cost a whole extra lead time, which
+   contradicts the measured +0.32 days. Queues are now oldest-order-first,
+   so a remake (which keeps its original order date) is expedited. The
+   results tab shows the simulated penalty vs the real 0.32.
+10. **Working-day count ignored partial weekend days.** Friday noon to
+    Saturday noon counted as a full working day. Now exact to the hour.
+11. **Default product mix had a data-entry slip.** The S1/S2/S3 shares
+    were meant to be rescaled to Thermo's real 80.6% but the ×0.806 step
+    was missing; after normalisation Thermo got 83.8% of intake. The mix
+    is now built from the route split and within-route weights explicitly.
+12. **Manual Sanding at 6.5 m²/op-hr was the plant's worst bottleneck**
+    (100% utilised, ~4,500 m²/month capacity against ~5,900 m²/month of
+    Thermo intake), which contradicted both the note calling it
+    "deliberately generous / not the constraint" and the scan data showing
+    ≥8,007 m²/month passing through sanding + MB Sander. Set to the
+    checkpoint-derived 11.52 m²/op-hr (same as the MB Sander). **Please
+    confirm** - this is the single biggest lever on Thermo's numbers.
+13. **`SimulationSettings` defaulted every horizon to the monthly intake**,
+    so a `day` run built outside the UI pushed 7,300 m² through in one
+    day. The default now follows the horizon.
+
+**Robustness added**
+
+- Mass-balance self-check every run (intake = completed + WIP, else it
+  refuses to report a result).
+- Roster validation with every problem listed (unknown station, bad
+  shift, duplicate id, absence rate out of range, missing columns); the
+  UI shows these instead of crashing. Atomic CSV save.
+- Settings validation (horizon, mix, targets, schedules, capacities);
+  impossible shift schedules (day + afternoon > 24 h) disable the Run
+  button with a message. Zero capacity on a CNC no longer divides by zero.
+- Product mix that doesn't sum to 100% is normalised (and says so) so
+  the intake total is honoured.
+- Config self-check at import (`validate_config()`), so a typo in a
+  station table fails loudly with a readable message.
+- Staffing-gap diagnostics: hours a station was scheduled with work
+  waiting and nobody on it (a utilisation chart cannot show this).
+- Reality-check panel: simulated month vs the real completion %, DIFOT,
+  Thermo lead time and remake penalty recorded in `config.py`.
+- 41 regression tests (`python -m unittest discover -s tests`).
+
+**Net effect on the month smoke test (7,300 m²/month, no sick leave)**
+
+| | Before session 3 | After |
+|---|---|---|
+| Completion % | 70% | 97% |
+| DIFOT (both) | 24% | 88% |
+| Thermo avg lead (working days) | 11.7 | 4.7 (real: 8.66) |
+| Thermo DIFOT | 29% | 100% |
+| Cut & Clash avg lead (calendar days) | 16.3 | 7.1 (target 7) |
+| Cut & Clash DIFOT | 0% | 43% |
+| Top utilisation | Sanding 99%, CNC 1536 99% | CNC 1536 100%, MB Sander 98%, Press 1 98% |
+
 ## Open questions (need your input, not guessable from data)
+
+0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
+   days average) once the modelling errors are out. The engine measures
+   each m² from order to despatch; the dashboard measures orders/parts,
+   and an order waits for its slowest part, gets batched, and queues for
+   scheduling in ways a pure capacity model doesn't see. The two knobs
+   that stand for "time outside the floor" are `pre_prod_days` (1.5) and
+   `post_prod_days` (0.5) in `simulation.py` - if the ~4-day gap is mostly
+   order-processing / scheduling / delivery, raise those; if it's floor
+   congestion, the station rates are too generous. Real order-level data
+   (order date, release-to-floor date, despatch date) would settle which.
+0b. **Cut & Clash DIFOT is 43% at the real 19.4% share** because CNC 1536
+   sits at 100% with one afternoon operator - same as open question 2
+   below, now with the correct share of intake. Either the day-shift
+   staffing exists and isn't in the roster, or the 20 min/board cut time
+   (an old-tool placeholder) is too slow.
+0c. **The two real intake sources disagree on the route split**: the
+   13-month tracker gives Cut & Clash ~13% of m² (984 of 7,409/month);
+   product_2026.xlsx gives 19.4%. The mix uses 19.4%; the monthly intake
+   preset uses the tracker's 7,300. Worth deciding which one the sim
+   should be judged against.
 
 1. **Does Optimising process Thermo work too, or just Cut & Clash?** The
    real Optimising volume (~9,900 m²/month) is nearly as large as total

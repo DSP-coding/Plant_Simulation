@@ -1,2 +1,3 @@
-streamlit>=1.38
+# Python 3.9 or newer.
+streamlit>=1.49   # st.dataframe(width="stretch") needs 1.49+
 pandas>=2.0

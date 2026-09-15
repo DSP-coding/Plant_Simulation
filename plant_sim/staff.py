@@ -13,11 +13,19 @@ just calls the methods below) is the whole point of "click staff, set skills".
 from __future__ import annotations
 
 import csv
+import os
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from plant_sim.config import DEFAULT_ABSENCE_RATE_PCT, STATIONS
+from plant_sim.config import DEFAULT_ABSENCE_RATE_PCT, SHIFT_LABELS, STATIONS
+
+ROSTER_COLUMNS = ["id", "name", "home_station", "shift", "skills", "absence_rate_pct", "notes"]
+
+
+class RosterError(ValueError):
+    """Raised when a roster (file or in-memory) contains something the
+    simulation can't run with - every problem is listed, not just the first."""
 
 
 @dataclass
@@ -46,15 +54,41 @@ class Operator:
         """Home station plus every extra skill, deduplicated."""
         return {self.home_station} | self.skills
 
+    def problems(self) -> list[str]:
+        """Human-readable list of anything wrong with this record (empty = fine)."""
+        out = []
+        who = f"{self.name or '?'} (id {self.id or '?'})"
+        if not str(self.id).strip():
+            out.append("an operator has an empty id")
+        if not str(self.name).strip():
+            out.append(f"operator id {self.id!r} has an empty name")
+        if self.home_station not in STATIONS:
+            out.append(f"{who}: unknown home station {self.home_station!r} "
+                       f"(valid: {', '.join(STATIONS)})")
+        for s in self.skills:
+            if s not in STATIONS:
+                out.append(f"{who}: unknown skill station {s!r}")
+        if self.shift not in SHIFT_LABELS:
+            out.append(f"{who}: shift must be one of {SHIFT_LABELS}, got {self.shift!r}")
+        try:
+            rate = float(self.absence_rate_pct)
+            if not (0.0 <= rate <= 100.0):
+                out.append(f"{who}: absence rate must be 0-100%, got {rate}")
+        except (TypeError, ValueError):
+            out.append(f"{who}: absence rate is not a number ({self.absence_rate_pct!r})")
+        return out
+
 
 class Roster:
     """The full staff list, plus the day-by-day absence draw."""
 
     def __init__(self, operators: list[Operator] | None = None):
-        self.operators: list[Operator] = operators or []
+        self.operators: list[Operator] = list(operators) if operators else []
 
     # -- CRUD -----------------------------------------------------------
     def add(self, operator: Operator) -> None:
+        if self.get(operator.id) is not None:
+            raise RosterError(f"operator id {operator.id!r} already exists")
         self.operators.append(operator)
 
     def remove(self, operator_id: str) -> None:
@@ -65,6 +99,23 @@ class Roster:
 
     def by_shift(self, shift: str) -> list[Operator]:
         return [o for o in self.operators if o.shift == shift]
+
+    # -- Validation ---------------------------------------------------------
+    def problems(self) -> list[str]:
+        out = []
+        seen: set[str] = set()
+        for op in self.operators:
+            out.extend(op.problems())
+            if op.id in seen:
+                out.append(f"duplicate operator id {op.id!r}")
+            seen.add(op.id)
+        return out
+
+    def validate(self) -> None:
+        """Raise RosterError listing every problem, or return silently."""
+        problems = self.problems()
+        if problems:
+            raise RosterError("Roster has problems:\n  - " + "\n  - ".join(problems))
 
     # -- Absenteeism ------------------------------------------------------
     def roll_daily_absences(self, day_index: int, sick_enabled: bool,
@@ -92,29 +143,60 @@ class Roster:
             id,name,home_station,shift,skills,absence_rate_pct,notes
         where `skills` is a semicolon-separated list of extra station ids
         (the home_station is always implicitly included, no need to repeat it).
+
+        Raises RosterError (listing every problem) if the file can't be used.
         """
+        path = Path(path)
+        if not path.exists():
+            raise RosterError(f"roster file not found: {path}")
         operators = []
-        with open(path, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                extra_skills = {s.strip() for s in row.get("skills", "").split(";") if s.strip()}
+        problems = []
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            missing = [c for c in ("id", "name", "home_station") if c not in (reader.fieldnames or [])]
+            if missing:
+                raise RosterError(f"{path}: missing required column(s) {missing}; "
+                                  f"expected header {','.join(ROSTER_COLUMNS)}")
+            for line_no, row in enumerate(reader, start=2):
+                # Blank/whitespace-only lines are skipped, not treated as a person.
+                if not any((v or "").strip() for v in row.values() if isinstance(v, str)):
+                    continue
+                rate_raw = (row.get("absence_rate_pct") or "").strip()
+                try:
+                    rate = float(rate_raw) if rate_raw else DEFAULT_ABSENCE_RATE_PCT
+                except ValueError:
+                    problems.append(f"line {line_no}: absence_rate_pct {rate_raw!r} is not a number")
+                    rate = DEFAULT_ABSENCE_RATE_PCT
+                home = (row.get("home_station") or "").strip()
+                extra_skills = {s.strip() for s in (row.get("skills") or "").split(";") if s.strip()}
+                extra_skills.discard(home)   # home is implicit; don't double-list it
                 operators.append(Operator(
-                    id=row["id"],
-                    name=row["name"],
-                    home_station=row["home_station"],
-                    shift=row.get("shift", "day") or "day",
+                    id=(row.get("id") or "").strip(),
+                    name=(row.get("name") or "").strip(),
+                    home_station=home,
+                    shift=(row.get("shift") or "").strip().lower() or "day",
                     skills=extra_skills,
-                    absence_rate_pct=float(row["absence_rate_pct"]) if row.get("absence_rate_pct") else DEFAULT_ABSENCE_RATE_PCT,
-                    notes=row.get("notes", ""),
+                    absence_rate_pct=rate,
+                    notes=(row.get("notes") or "").strip(),
                 ))
-        return cls(operators)
+        roster = cls(operators)
+        problems.extend(roster.problems())
+        if problems:
+            raise RosterError(f"{path} has problems:\n  - " + "\n  - ".join(problems))
+        return roster
 
     def to_csv(self, path: str | Path) -> None:
-        with open(path, "w", newline="", encoding="utf-8") as f:
+        """Write the roster out. The file is written to a temporary name and
+        then swapped into place, so a crash mid-write can never leave a
+        half-written roster behind."""
+        path = Path(path)
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["id", "name", "home_station", "shift", "skills",
-                              "absence_rate_pct", "notes"])
+            writer.writerow(ROSTER_COLUMNS)
             for op in self.operators:
                 writer.writerow([
                     op.id, op.name, op.home_station, op.shift,
-                    ";".join(sorted(op.skills)), op.absence_rate_pct, op.notes,
+                    ";".join(sorted(op.skills - {op.home_station})), op.absence_rate_pct, op.notes,
                 ])
+        os.replace(tmp, path)

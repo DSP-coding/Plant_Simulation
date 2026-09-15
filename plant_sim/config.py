@@ -12,7 +12,7 @@ the simulation, this is the file to edit.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -83,16 +83,27 @@ PRODUCT_CLASSES: dict[str, ProductClass] = {
 # (11,394.3 m2 = Mel 10,777.4 + Acr 616.9). Within Thermo, the S1/S2/S3 split
 # below is still the [ASSUMPTION] placeholder from the old tool (58.8/0.14/34.9
 # rescaled to sum to the real 80.6% Thermo share) pending Series Mix by Month.xlsx.
-DEFAULT_MIX_PCT = {
-    "S1": 62.8,       # 80.6% * (58.8 / 93.84)
-    "S2": 0.15,       # 80.6% * (0.14 / 93.84)
-    "S3": 37.35,      # wait: normalised below, see note
-    "Acrylic": 1.04,  # 19.4% * (616.9 / 11394.3)
-    "Melamine": 18.36,  # 19.4% * (10777.4 / 11394.3)
+#
+# Route shares first, then each class's share WITHIN its route, so the
+# arithmetic is checkable by eye (an earlier version had the S1/S3 numbers
+# missing the x0.806 step, which quietly gave Thermo 83.8% of intake).
+_THERMO_SHARE_PCT = 80.6        # [REAL] product_2026.xlsx
+_CUTCLASH_SHARE_PCT = 19.4      # [REAL] product_2026.xlsx
+_WITHIN_THERMO = {"S1": 58.8, "S2": 0.14, "S3": 34.9}          # [ASSUMPTION] old tool
+_WITHIN_CUTCLASH = {"Acrylic": 616.9, "Melamine": 10777.4}     # [REAL] m2, product_2026.xlsx
+
+
+def _split(total_pct: float, weights: dict[str, float]) -> dict[str, float]:
+    w = sum(weights.values())
+    return {k: total_pct * v / w for k, v in weights.items()}
+
+
+DEFAULT_MIX_PCT: dict[str, float] = {
+    **_split(_THERMO_SHARE_PCT, _WITHIN_THERMO),
+    **_split(_CUTCLASH_SHARE_PCT, _WITHIN_CUTCLASH),
 }
 # Renormalise so the five shares always sum to exactly 100, regardless of the
-# rough arithmetic above - this is recomputed at import time so hand edits to
-# the dict above never silently drift.
+# arithmetic above - recomputed at import time so hand edits never drift.
 _total = sum(DEFAULT_MIX_PCT.values())
 DEFAULT_MIX_PCT = {k: v * 100.0 / _total for k, v in DEFAULT_MIX_PCT.items()}
 
@@ -109,6 +120,23 @@ class Station:
     ideal_ops: int             # operators for "full rate" per shift
     capacity_m2_per_op_hour: float  # [ASSUMPTION unless noted] m2/hr one operator can process
     num_machines: int = 1      # for machine-bound stations (CNC), caps useful headcount
+    # True for stations whose throughput is set by a machine's cycle, not by
+    # how many hands are on it: putting MORE than ideal_ops people on it adds
+    # nothing (the machine can't go faster), so capacity caps at ideal_ops.
+    # False for manual stations (sanding, packing, drilling...) where an
+    # extra pair of hands genuinely adds an extra pair of hands' worth.
+    machine_bound: bool = False
+
+    @property
+    def max_useful_ops(self) -> int | None:
+        """Most people who can usefully work here at once (None = no cap).
+        Used by the allocator so it never parks a floater somewhere they'd
+        just stand around."""
+        if self.id in CNC_STATION_IDS:
+            return self.num_machines
+        if self.machine_bound:
+            return self.ideal_ops
+        return None
 
 
 # capacity_m2_per_op_hour: optimising/sanding/mb_sander/press_1/press_2/despatch
@@ -135,16 +163,27 @@ STATIONS: dict[str, Station] = {
                            ideal_ops=1, capacity_m2_per_op_hour=0.0, num_machines=1),
     "eb_drilling": Station("eb_drilling", "Edge Band / Drilling", Route.CUT_AND_CLASH,
                             ideal_ops=2, capacity_m2_per_op_hour=6.5),
+    # ideal_ops == num_machines on purpose: "ideal staffing" for a bank of
+    # CNCs means one operator per machine, so the "capacity at ideal
+    # staffing" number shown in the UI is the 5-machine figure. Extra people
+    # beyond the machine count add nothing (see Station.max_useful_ops).
     "cnc_thermo": Station("cnc_thermo", "CNC (Thermo)", Route.THERMO,
-                           ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=5),
-    # [ASSUMPTION - deliberately generous] Manual sanding has no machine limit
-    # (several people can sand profiles in parallel), and per the user it is
-    # NOT the real constraint - everything gets fed through the single MB
-    # Sander afterwards, which is the true funnel point (see below). Keeping
-    # this rate comfortably high on purpose so manual sanding doesn't become
-    # an artificial bottleneck in front of the real one.
+                           ideal_ops=5, capacity_m2_per_op_hour=0.0, num_machines=5),
+    # [REAL-derived lower bound] Manual sanding has no machine limit (several
+    # people can sand profiles in parallel), and per the user it is NOT the
+    # real constraint - everything gets fed through the single MB Sander
+    # afterwards, which is the true funnel point (see below). The real scan
+    # data has one "Sanding" checkpoint covering BOTH manual sanding and the
+    # MB Sander, and it shows ~8,007 m2/month getting through - so manual
+    # sanding's capacity at its normal 2-person crew is AT LEAST that. Rate =
+    # 8007 / (ideal_ops=2 * REFERENCE_HOURS_PER_MONTH), the same figure the
+    # MB Sander gets. (The earlier 6.5 m2/op-hr placeholder was meant to be
+    # "comfortably non-bottleneck" but actually capped sanding at ~4,500
+    # m2/month - well under Thermo's ~5,900 m2/month intake - which made it
+    # the plant's biggest bottleneck by a wide margin, contradicting both the
+    # scan data and the stated intent.)
     "sanding":    Station("sanding", "Manual Sanding", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=6.5),
+                           ideal_ops=2, capacity_m2_per_op_hour=11.517548906789415),
     # [REAL, from 3-month WorkArea scan-checkpoint data, see chat] The real
     # scan system has only ONE checkpoint ("Sanding") covering both manual
     # sanding and the MB Sander - but per the user, EVERYTHING that's
@@ -152,15 +191,21 @@ STATIONS: dict[str, Station] = {
     # checkpoint's real ceiling (90th-percentile daily total, extrapolated to
     # a month = ~8,007 m2/month) belongs to the MB Sander specifically, not
     # to manual sanding. Rate = 8007 / (ideal_ops=2 * REFERENCE_HOURS_PER_MONTH).
+    # machine_bound: one machine, infeed + outfeed - a third person can't make
+    # it run faster. See MB_SANDER_SINGLE_OP_FACTOR for the one-person case.
     "mb_sander":  Station("mb_sander", "MB Sander", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=11.517548906789415, num_machines=1),
+                           ideal_ops=2, capacity_m2_per_op_hour=11.517548906789415, num_machines=1,
+                           machine_bound=True),
     # [REAL] "Edging" and "Glue" were originally modelled as two separate
     # stations, but there is only one real physical station here: the Cefla
     # automated gluing line, confirmed capacity 9,000 m2/month. Rate below is
     # back-solved from that figure at ideal_ops=2 on the reference schedule
     # (9000 / (2 * REFERENCE_HOURS_PER_MONTH)).
+    # machine_bound: it's an automated line - the confirmed 9,000 m2/month is
+    # the line's ceiling at its normal 2-person crew, not "per extra person".
     "edging":     Station("edging", "Cefla Automated Gluing Line", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=12.945914844649023),
+                           ideal_ops=2, capacity_m2_per_op_hour=12.945914844649023,
+                           machine_bound=True),
     # Press 1 and Press 2 are staffed (and edited) independently, but they're
     # two machines doing the same job on one shared pile of work - see
     # PRESS_QUEUE_ID / PRESS_STATIONS below and the dedicated handling in
@@ -170,6 +215,11 @@ STATIONS: dict[str, Station] = {
     # the two presses' combined real op-hours (1,390/month, 4+4 people) - the
     # real data can't tell Press 1 and Press 2 apart (one shared checkpoint),
     # so both machines get the same blended rate.
+    # NOT machine_bound (yet): that rate was derived per op-hour across all
+    # 8 real press people, so a linear per-person model is what reproduces
+    # the observed ceiling at the real roster. Flip machine_bound=True (and
+    # set ideal_ops to the real crew size) once a per-press cycle time is
+    # known - a press physically can't go faster with a 5th person on it.
     "press_1":    Station("press_1", "Press 1", Route.THERMO,
                            ideal_ops=3, capacity_m2_per_op_hour=5.370, num_machines=1),
     "press_2":    Station("press_2", "Press 2", Route.THERMO,
@@ -189,6 +239,11 @@ STATIONS: dict[str, Station] = {
 # overhead per board, same for every class. [ASSUMPTION] carried from old tool.
 CNC_SETUP_MIN_PER_BOARD = 3.0
 CNC_UTILISATION = 0.80   # [ASSUMPTION] machine uptime while manned
+
+# [ASSUMPTION, from original tool] one operator CAN run the MB Sander alone
+# (loading and unloading themselves) but only at this fraction of the normal
+# two-person infeed+outfeed rate.
+MB_SANDER_SINGLE_OP_FACTOR = 0.45
 
 
 # ---------------------------------------------------------------------------
@@ -211,12 +266,27 @@ def default_cnc_capacity_m2_per_month(route: str) -> float:
     station = next(s for s in STATIONS.values() if s.id in CNC_STATION_IDS and s.route == route)
     classes = [c for c, pc in PRODUCT_CLASSES.items() if pc.route == route]
     total_share = sum(DEFAULT_MIX_PCT[c] for c in classes)
+    if total_share <= 0:
+        # No default volume on this route at all - fall back to an unweighted
+        # average cut time rather than dividing by zero.
+        weights = {c: 1.0 / len(classes) for c in classes}
+    else:
+        weights = {c: DEFAULT_MIX_PCT[c] / total_share for c in classes}
     weighted_min_per_m2 = sum(
-        (DEFAULT_MIX_PCT[c] / total_share) * (PRODUCT_CLASSES[c].cnc_min_per_board + CNC_SETUP_MIN_PER_BOARD) / BOARD_M2
-        for c in classes
+        weights[c] * cnc_min_per_m2(c) for c in classes
     )
-    available_minutes_per_month = station.num_machines * REFERENCE_HOURS_PER_MONTH * 60.0 * CNC_UTILISATION
-    return available_minutes_per_month / weighted_min_per_m2
+    # "Ideal staffing" can never man more machines than exist (or more than
+    # the ideal crew size) - whichever is smaller is the number that runs.
+    machines_at_ideal = min(station.ideal_ops, station.num_machines)
+    available_minutes_per_month = machines_at_ideal * REFERENCE_HOURS_PER_MONTH * 60.0 * CNC_UTILISATION
+    return available_minutes_per_month / weighted_min_per_m2 if weighted_min_per_m2 > 0 else 0.0
+
+
+def cnc_min_per_m2(product_class: str) -> float:
+    """Machine-minutes to cut one m2 of this class (setup + cut, per board,
+    spread over the board's area) at the default cut times."""
+    pc = PRODUCT_CLASSES[product_class]
+    return (pc.cnc_min_per_board + CNC_SETUP_MIN_PER_BOARD) / BOARD_M2
 
 
 def default_station_capacity_m2_per_month(station_id: str) -> float:
@@ -252,11 +322,53 @@ ROUTE_ENTRY_STATION = {
 }
 
 
+def queue_id_for(station_id: str) -> str:
+    """Which physical pile of work a station pulls from. Every station has
+    its own queue except the two presses, which share one (PRESS_QUEUE_ID).
+    Used by both the engine and the allocator so "how much is waiting in
+    front of Press 2?" always means the shared press pile, not zero."""
+    return PRESS_QUEUE_ID if station_id in PRESS_STATIONS else station_id
+
+
+# Which queue each station FEEDS (its downstream). Derived from the route
+# sequences above; the two presses and Cut & Clash's last station all feed
+# the shared despatch queue, and despatch feeds nothing (it's the exit).
+def downstream_queue_for(station_id: str) -> str | None:
+    if station_id == SHARED_TERMINAL_STATION or station_id == "admin":
+        return None
+    if station_id in PRESS_STATIONS:
+        return SHARED_TERMINAL_STATION
+    for route, seq in ROUTE_SEQUENCE.items():
+        if station_id in seq:
+            i = seq.index(station_id)
+            if i + 1 < len(seq):
+                return seq[i + 1]
+            return PRESS_QUEUE_ID if route == Route.THERMO else SHARED_TERMINAL_STATION
+    raise KeyError(station_id)
+
+
+# The order stations are processed within one simulated hour: DOWNSTREAM
+# FIRST. Each station pulls from whatever was in its queue at the START of
+# the hour, so a part needs at least one hour per station to travel the
+# line - the same way the real floor works. (Upstream-first would let a
+# freshly-cut board be sanded, sanded again, glued, pressed and packed all
+# within the same hour, which quietly shortens every lead time.)
+PROCESSING_ORDER: list[str] = (
+    [SHARED_TERMINAL_STATION]
+    + list(PRESS_STATIONS)
+    + list(reversed(ROUTE_SEQUENCE[Route.THERMO]))
+    + list(reversed(ROUTE_SEQUENCE[Route.CUT_AND_CLASH]))
+)
+
+
 # ---------------------------------------------------------------------------
 # Shift crews: groups of stations that share one shift schedule (days/week,
 # shift lengths, whether an afternoon shift runs at all). Mirrors how the real
 # plant is actually rostered - see the staff roster "Area" groupings.
 # ---------------------------------------------------------------------------
+
+SHIFT_LABELS = ("day", "aft")
+
 
 @dataclass
 class ShiftSchedule:
@@ -265,15 +377,39 @@ class ShiftSchedule:
     aft_enabled: bool = False
     aft_hrs: float = 8.0
 
+    def __post_init__(self):
+        # Fail loudly on nonsense (a negative shift length, 9 days a week)
+        # rather than quietly simulating something impossible.
+        if not (0 <= int(self.days_per_week) <= 7):
+            raise ValueError(f"days_per_week must be 0-7, got {self.days_per_week}")
+        if self.day_hrs < 0 or self.aft_hrs < 0:
+            raise ValueError("shift lengths cannot be negative")
+        if self.day_hrs + (self.aft_hrs if self.aft_enabled else 0.0) > 24.0 + 1e-9:
+            raise ValueError("day + afternoon shift cannot exceed 24 hours")
+        self.days_per_week = int(self.days_per_week)
+
     def shift_at(self, hour_of_day: float) -> str | None:
-        """Which shift ('day'/'aft') covers this hour-of-day, or None if closed."""
+        """Which shift ('day'/'aft') covers this hour-of-day, or None if closed.
+        Hour 0 of the simulated day is the START of the day shift (think
+        6am), not midnight - the afternoon shift follows straight on."""
         if hour_of_day < self.day_hrs:
             return "day"
         if self.aft_enabled and hour_of_day < self.day_hrs + self.aft_hrs:
             return "aft"
         return None
 
+    def offers_shift(self, shift_label: str) -> bool:
+        """Does this crew run the given shift at all (on its working days)?"""
+        if shift_label == "day":
+            return self.day_hrs > 0
+        return self.aft_enabled and self.aft_hrs > 0
+
+    def shift_start_hour(self, shift_label: str) -> float:
+        return 0.0 if shift_label == "day" else self.day_hrs
+
     def active_on_weekday(self, weekday: int) -> bool:
+        """weekday 0 = Monday ... 6 = Sunday; a crew on N days/week works
+        the first N weekdays."""
         return weekday < self.days_per_week
 
 
@@ -307,6 +443,23 @@ DEFAULT_SHIFT_SCHEDULES: dict[str, ShiftSchedule] = {
 # ---------------------------------------------------------------------------
 # Intake volume defaults
 # ---------------------------------------------------------------------------
+
+# WHEN orders arrive. Orders are placed by the office on working days, not
+# at 3am on a Sunday - so the horizon's intake total is spread evenly over
+# the intake window (hours of the simulated day, relative to day-shift
+# start) on weekdays only. Spreading it over all 168 hours of the week
+# (which the engine used to do) put ~29% of every week's orders on the
+# weekend, where they sat and aged before anyone could touch them, which
+# quietly inflated Cut & Clash's calendar-day lead time in particular.
+# [ASSUMPTION] window = the first 8 hours of the day shift (office hours).
+INTAKE_WEEKDAYS_ONLY = True
+INTAKE_WINDOW_HOURS = (0.0, 8.0)   # [start, end) hour-of-day
+
+# How long each horizon runs. "month" is a flat 30 days (not 4.345 weeks)
+# so it always ends on a day boundary and contains a whole number of intake
+# days - the entered monthly intake is then spread over exactly the intake
+# days inside the window, so the "Intake" KPI always equals what you typed.
+HORIZON_DAYS = {"day": 1, "week": 7, "month": 30}
 
 # [REAL] product_2026.xlsx, Jan-Sep 2026. Three horizons, each with the
 # combined total and the Thermo/Cut&Clash split (computed on days/weeks/
@@ -358,6 +511,17 @@ REAL_INTAKE_M2 = {
 REAL_DIFOT_HISTORY_PCT = {"min": 55.0, "max": 97.0, "mean": 81.7}
 REAL_PRODUCTION_HOURS_PER_MONTH = {"min": 5303.0, "max": 9677.0, "mean": 7745.0}
 REAL_M2_PER_PRODUCTION_HOUR = 0.965
+
+# [REAL] Thermo average lead time from the live lead-time dashboard (YTD to
+# 11 Sep 2026): 8.64 working days for non-remakes, 8.97 for remakes - i.e.
+# ~8.66 overall. Cut & Clash has no equivalent dashboard figure yet. These
+# feed the "reality check" panel in the UI, which compares a simulated
+# month against them so a miscalibration is visible instead of silent.
+REAL_AVG_LEAD_DAYS = {
+    Route.THERMO: 8.66,
+    Route.CUT_AND_CLASH: None,
+}
+REAL_REMAKE_LEAD_PENALTY_DAYS = 0.32   # 8.97 - 8.64, working days
 
 # [REAL] target lead time is different per product range - Cut & Clash quotes
 # a 7-day lead time. Thermo's 10-day target is now [REAL, confirmed]: your
@@ -413,15 +577,14 @@ DEFAULT_BUFFER_CAP_M2 = 5000.0
 # (10 working days = up to ~14 calendar days) plus pre/post-production
 # buffer with room to spare. Raise this if a route's target lead time is
 # ever set higher than ~15 days.
-SIMULATION_WARMUP_DAYS = 21.0
+SIMULATION_WARMUP_DAYS = 21
 
-# Hour-of-day boundary used to decide whether "now" counts as the day-shift or
-# afternoon-shift allocation snapshot (see simulation.py). [ASSUMPTION/
-# SIMPLIFICATION]: real crews have slightly different day-shift lengths
-# (10h thermo/finishing vs 8h cut&clash); this single boundary is a
-# deliberate simplification so staffing is decided once per shift, not
-# re-shuffled every hour.
-ALLOCATION_SHIFT_BOUNDARY_HOUR = 10
+# Staffing is decided once per shift, not re-shuffled every hour: each
+# calendar day gets one "day" allocation snapshot and one "aft" snapshot.
+# Which snapshot a station reads at a given hour is decided by ITS OWN
+# crew's schedule (an 8-hour Cut & Clash day shift hands over to its
+# afternoon crew at hour 8 while the 10-hour Thermo crews are still on
+# days) - there is no single plant-wide handover hour.
 
 
 # ---------------------------------------------------------------------------
@@ -440,9 +603,73 @@ ALLOCATION_MAX_REBALANCE_MOVES = 6
 
 # Remake loop. [REAL] Both figures now come from the live lead-time dashboard
 # (Thermo, YTD through 11 Sep 2026): 4,015 of 57,110 complete parts were
-# remakes (7.03%), and remakes take 0.32 days longer on average than
-# non-remakes (8.97 vs 8.64 working days) - that added-time figure is what
-# DEFAULT_REMAKE_DAYS represents here (time the remake loop holds a batch
-# before it re-enters the line), not a from-scratch remake cycle time.
+# remakes (7.03%), and remakes take only 0.32 days longer on average than
+# non-remakes (8.97 vs 8.64 working days).
+#
+# That small penalty tells you something about HOW remakes flow: a part that
+# went back to the start of the line and waited its turn again would take a
+# whole extra lead time, not a third of a day. So the engine treats remakes
+# as EXPEDITED - every queue is worked oldest-order-first, and a remake keeps
+# its original order date, so it goes to the front of every queue on its
+# second pass (this is how a real floor treats a late part). DEFAULT_REMAKE_DAYS
+# is the hold before it re-enters (inspection / decision / re-programming);
+# the UI reports the simulated remake penalty next to the real 0.32 so you
+# can see whether this default reproduces it.
 DEFAULT_REMAKE_RATE_PCT = 7.0
 DEFAULT_REMAKE_DAYS = 0.32
+
+
+# ---------------------------------------------------------------------------
+# Self-check: catch a typo in the tables above at import time, with a
+# readable message, rather than as a KeyError deep inside the simulation.
+# ---------------------------------------------------------------------------
+
+def validate_config() -> None:
+    problems = []
+    for sid in STATIONS:
+        if sid not in STATION_CREW:
+            problems.append(f"station '{sid}' has no crew in STATION_CREW")
+    for sid, crew in STATION_CREW.items():
+        if sid not in STATIONS:
+            problems.append(f"STATION_CREW refers to unknown station '{sid}'")
+        if crew not in DEFAULT_SHIFT_SCHEDULES:
+            problems.append(f"crew '{crew}' has no entry in DEFAULT_SHIFT_SCHEDULES")
+    for route, seq in ROUTE_SEQUENCE.items():
+        for sid in seq:
+            if sid not in STATIONS:
+                problems.append(f"ROUTE_SEQUENCE[{route}] refers to unknown station '{sid}'")
+            elif STATIONS[sid].route != route:
+                problems.append(f"station '{sid}' is in ROUTE_SEQUENCE[{route}] but belongs to {STATIONS[sid].route}")
+        if ROUTE_ENTRY_STATION.get(route) != seq[0]:
+            problems.append(f"ROUTE_ENTRY_STATION[{route}] should be the first station of its sequence ({seq[0]})")
+    for sid in PRESS_STATIONS:
+        if sid not in STATIONS:
+            problems.append(f"PRESS_STATIONS refers to unknown station '{sid}'")
+    if SHARED_TERMINAL_STATION not in STATIONS:
+        problems.append(f"SHARED_TERMINAL_STATION '{SHARED_TERMINAL_STATION}' is not a station")
+    for cls, pc in PRODUCT_CLASSES.items():
+        if pc.route not in ROUTE_SEQUENCE:
+            problems.append(f"product class '{cls}' has unknown route '{pc.route}'")
+        if cls not in DEFAULT_MIX_PCT:
+            problems.append(f"product class '{cls}' has no DEFAULT_MIX_PCT entry")
+    for cls in DEFAULT_MIX_PCT:
+        if cls not in PRODUCT_CLASSES:
+            problems.append(f"DEFAULT_MIX_PCT refers to unknown product class '{cls}'")
+    for route in ROUTE_SEQUENCE:
+        if route not in DEFAULT_TARGET_LEAD_DAYS:
+            problems.append(f"route '{route}' has no DEFAULT_TARGET_LEAD_DAYS")
+        if route not in LEAD_TIME_EXCLUDES_WEEKENDS:
+            problems.append(f"route '{route}' has no LEAD_TIME_EXCLUDES_WEEKENDS entry")
+    for sid in CNC_STATION_IDS:
+        if sid not in STATIONS:
+            problems.append(f"CNC_STATION_IDS refers to unknown station '{sid}'")
+    if not (INTAKE_WINDOW_HOURS[0] >= 0 and INTAKE_WINDOW_HOURS[1] <= 24
+            and INTAKE_WINDOW_HOURS[1] > INTAKE_WINDOW_HOURS[0]):
+        problems.append(f"INTAKE_WINDOW_HOURS must be a [start, end) inside 0-24, got {INTAKE_WINDOW_HOURS}")
+    if SIMULATION_WARMUP_DAYS < 0:
+        problems.append("SIMULATION_WARMUP_DAYS cannot be negative")
+    if problems:
+        raise ValueError("plant_sim.config is inconsistent:\n  - " + "\n  - ".join(problems))
+
+
+validate_config()

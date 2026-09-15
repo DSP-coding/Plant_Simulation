@@ -151,12 +151,14 @@ function render(hourIdx) {
       const isActive = t.active.includes(st.id);
       boxEl.classList.toggle('off', !isActive);
       const ops = (t.ops && t.ops[st.id]) || 0;
-      opsEl.textContent = ops + (ops === 1 ? ' staff' : ' staff');
-      // day/aft shading: we don't carry the exact label back from Python,
-      // so use "active" as day (teal) - afternoon-only distinction isn't
-      // needed for this view since ops count already reflects who's on.
-      dotEl.classList.toggle('day', isActive);
-      dotEl.classList.toggle('aft', false);
+      opsEl.textContent = ops + ' staff';
+      // Teal = this station's crew is on its day shift, amber = afternoon
+      // shift, dim = not running (the label comes from each crew's own
+      // schedule, so an 8-hour Cut & Clash day can hand over to afternoons
+      // while the 10-hour Thermo crews are still on days).
+      const shift = (t.shift && t.shift[st.id]) || null;
+      dotEl.classList.toggle('day', shift === 'day');
+      dotEl.classList.toggle('aft', shift === 'aft');
       const bufVal = (t.buf && t.buf[st.id]) || 0;
       bufEl.textContent = Math.round(bufVal).toLocaleString();
       const maxBuf = MAXBUF[st.id] || 1;
@@ -254,9 +256,14 @@ def build_floor_html(trace: list[dict]) -> str:
             "out": {k: round(v, 2) for k, v in t["out"].items()},
             "ops": t.get("ops", {}),
             "active": t.get("active", []),
+            "shift": {k: v for k, v in t.get("shift", {}).items() if v},
         }
         for t in trace
     ]
+    if not slim_trace:
+        # Nothing to animate (zero-length run) - still return a valid page
+        # rather than letting the JS divide by TRACE.length == 0.
+        slim_trace = [{"buf": {}, "out": {}, "ops": {}, "active": [], "shift": {}}]
 
     all_station_ids = {sid for row in row_defs for sid in row["stations"]}
     max_buf = {
