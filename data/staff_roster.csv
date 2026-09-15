@@ -5,8 +5,8 @@ id,name,home_station,shift,skills,absence_rate_pct,notes
 201,Nirmal Singh,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
 395,Jay (Marvin) Baluenit,cnc_thermo,day,cnc_1536;eb_drilling,3.8,Example multi-skilled operator per your note: can run all CNCs + edge banding
 396,Prabh Singh,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-410,Toupou Lolo,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-411,Romal Baldevind,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
+410,Toupou Lolo,cnc_thermo,aft,,3.8,From staff sheet snapshot (Area: CNC) - confirmed afternoon shift
+411,Romal Baldevind,cnc_thermo,aft,,3.8,From staff sheet snapshot (Area: CNC) - confirmed afternoon shift
 434,Raymond Baniaga,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
 510,Richard Rico Luis,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
 533,Jeremy Mendoza,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
