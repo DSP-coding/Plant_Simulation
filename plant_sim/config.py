@@ -111,27 +111,46 @@ class Station:
     num_machines: int = 1      # for machine-bound stations (CNC), caps useful headcount
 
 
-# [ASSUMPTION] capacity_m2_per_op_hour values are back-calculated from the old
-# HTML tool's capMonth targets (capMonth / (80 hrs/wk * 4.345 wk/month) / idealOps),
-# i.e. NOT yet grounded in the new Daily Pacer data. Replace once that file is
-# parsed (it has real daily Packing m2 and FTE - the ratio gives a real rate).
+# capacity_m2_per_op_hour: optimising/sanding/mb_sander/press_1/press_2/despatch
+# are now [REAL], calibrated from a 3-month WorkArea scan-checkpoint export
+# (90th-percentile daily total per WorkArea, extrapolated to a month, divided
+# by that station's real current roster op-hours/month) - see the per-station
+# comments below for each one's derivation. cnc_thermo/cnc_1536/eb_drilling
+# remain [ASSUMPTION] (the CNC stations use a different, machine-minute-based
+# model - see CNC_SETUP_MIN_PER_BOARD below; eb_drilling has no matching real
+# WorkArea checkpoint at all in the export).
 STATIONS: dict[str, Station] = {
-    # [ASSUMPTION] Optimising has no real throughput data - 50 m2/op/hr is a
-    # generous placeholder so it's rarely the bottleneck, but it CAN become one
-    # (e.g. Diana Savage alone on this station) rather than being literally
-    # infinite. Tune this once you know how fast nesting/optimising really runs.
+    # [REAL, from 3-month WorkArea scan-checkpoint data, see chat] rate is the
+    # 90th-percentile daily "Optimisation" scan total, extrapolated to a month
+    # and divided by Diana Savage's real hours (174/month, the only confirmed
+    # Optimising operator). Remarkably close to the old 50.0 guess. NOTE: the
+    # real Optimisation volume is nearly as large as TOTAL order intake
+    # (Thermo + Cut & Clash combined), not just Cut & Clash's ~19% share -
+    # unconfirmed whether Optimising actually processes some Thermo work too
+    # (see chat) - if so, ROUTE_SEQUENCE needs Thermo to pass through it as
+    # well, which would change this rate's true per-class attribution.
     "optimising": Station("optimising", "Optimising (nesting)", Route.CUT_AND_CLASH,
-                           ideal_ops=1, capacity_m2_per_op_hour=50.0),
+                           ideal_ops=1, capacity_m2_per_op_hour=57.164),
     "cnc_1536":   Station("cnc_1536", "CNC 1536 (Cut & Clash)", Route.CUT_AND_CLASH,
                            ideal_ops=1, capacity_m2_per_op_hour=0.0, num_machines=1),
     "eb_drilling": Station("eb_drilling", "Edge Band / Drilling", Route.CUT_AND_CLASH,
                             ideal_ops=2, capacity_m2_per_op_hour=6.5),
     "cnc_thermo": Station("cnc_thermo", "CNC (Thermo)", Route.THERMO,
                            ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=5),
+    # [REAL combined ceiling / ASSUMPTION relative split] The real scan system
+    # has only ONE checkpoint ("Sanding") covering both manual sanding and the
+    # MB Sander - there's no way to see each one's real rate separately. The
+    # combined team's real ceiling (90th-percentile daily Sanding scan total,
+    # extrapolated to a month) is ~8,007 m2/month across their current 1,042
+    # real op-hours/month (3 sanding + 3 mb_sander home-station people) -
+    # dramatically lower than the two old guessed rates combined (~27,000
+    # implied). Both rates below are scaled down together, preserving the old
+    # 7:1 MB-Sander-vs-manual speed ratio, so the COMBINED ceiling now matches
+    # real data even though the individual split is still a guess.
     "sanding":    Station("sanding", "Manual Sanding", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=6.5),
+                           ideal_ops=2, capacity_m2_per_op_hour=1.921),
     "mb_sander":  Station("mb_sander", "MB Sander", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=45.5, num_machines=1),
+                           ideal_ops=2, capacity_m2_per_op_hour=13.448, num_machines=1),
     # [REAL] "Edging" and "Glue" were originally modelled as two separate
     # stations, but there is only one real physical station here: the Cefla
     # automated gluing line, confirmed capacity 9,000 m2/month. Rate below is
@@ -143,12 +162,22 @@ STATIONS: dict[str, Station] = {
     # two machines doing the same job on one shared pile of work - see
     # PRESS_QUEUE_ID / PRESS_STATIONS below and the dedicated handling in
     # simulation.py, rather than each getting its own separate buffer.
+    # [REAL, from 3-month WorkArea scan-checkpoint data] rate = 90th-percentile
+    # daily "Thermoform Press" scan total, extrapolated to a month, divided by
+    # the two presses' combined real op-hours (1,390/month, 4+4 people) - the
+    # real data can't tell Press 1 and Press 2 apart (one shared checkpoint),
+    # so both machines get the same blended rate.
     "press_1":    Station("press_1", "Press 1", Route.THERMO,
-                           ideal_ops=3, capacity_m2_per_op_hour=6.1, num_machines=1),
+                           ideal_ops=3, capacity_m2_per_op_hour=5.370, num_machines=1),
     "press_2":    Station("press_2", "Press 2", Route.THERMO,
-                           ideal_ops=3, capacity_m2_per_op_hour=6.1, num_machines=1),
+                           ideal_ops=3, capacity_m2_per_op_hour=5.370, num_machines=1),
+    # [REAL, from 3-month WorkArea scan-checkpoint data] rate = average of the
+    # 90th-percentile daily "Packing" and "Despatch" scan totals (two separate
+    # real checkpoints for what this model treats as one combined stage),
+    # extrapolated to a month, divided by the despatch team's real op-hours
+    # (1,390/month, 8 people). Close to the old 8.7 guess.
     "despatch":   Station("despatch", "Packing / Despatch", None,
-                           ideal_ops=3, capacity_m2_per_op_hour=8.7),
+                           ideal_ops=3, capacity_m2_per_op_hour=9.124),
     "admin":      Station("admin", "Admin", None, ideal_ops=1, capacity_m2_per_op_hour=1e9),
 }
 
