@@ -137,20 +137,23 @@ STATIONS: dict[str, Station] = {
                             ideal_ops=2, capacity_m2_per_op_hour=6.5),
     "cnc_thermo": Station("cnc_thermo", "CNC (Thermo)", Route.THERMO,
                            ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=5),
-    # [REAL combined ceiling / ASSUMPTION relative split] The real scan system
-    # has only ONE checkpoint ("Sanding") covering both manual sanding and the
-    # MB Sander - there's no way to see each one's real rate separately. The
-    # combined team's real ceiling (90th-percentile daily Sanding scan total,
-    # extrapolated to a month) is ~8,007 m2/month across their current 1,042
-    # real op-hours/month (3 sanding + 3 mb_sander home-station people) -
-    # dramatically lower than the two old guessed rates combined (~27,000
-    # implied). Both rates below are scaled down together, preserving the old
-    # 7:1 MB-Sander-vs-manual speed ratio, so the COMBINED ceiling now matches
-    # real data even though the individual split is still a guess.
+    # [ASSUMPTION - deliberately generous] Manual sanding has no machine limit
+    # (several people can sand profiles in parallel), and per the user it is
+    # NOT the real constraint - everything gets fed through the single MB
+    # Sander afterwards, which is the true funnel point (see below). Keeping
+    # this rate comfortably high on purpose so manual sanding doesn't become
+    # an artificial bottleneck in front of the real one.
     "sanding":    Station("sanding", "Manual Sanding", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=1.921),
+                           ideal_ops=2, capacity_m2_per_op_hour=6.5),
+    # [REAL, from 3-month WorkArea scan-checkpoint data, see chat] The real
+    # scan system has only ONE checkpoint ("Sanding") covering both manual
+    # sanding and the MB Sander - but per the user, EVERYTHING that's
+    # manually sanded then gets fed through this one machine, so that
+    # checkpoint's real ceiling (90th-percentile daily total, extrapolated to
+    # a month = ~8,007 m2/month) belongs to the MB Sander specifically, not
+    # to manual sanding. Rate = 8007 / (ideal_ops=2 * REFERENCE_HOURS_PER_MONTH).
     "mb_sander":  Station("mb_sander", "MB Sander", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=13.448, num_machines=1),
+                           ideal_ops=2, capacity_m2_per_op_hour=11.517548906789415, num_machines=1),
     # [REAL] "Edging" and "Glue" were originally modelled as two separate
     # stations, but there is only one real physical station here: the Cefla
     # automated gluing line, confirmed capacity 9,000 m2/month. Rate below is
