@@ -26,8 +26,11 @@ from plant_sim.floor_editor import apply_move, floor_editor, restore, snapshot
 from plant_sim.floor_view import build_floor_html
 from plant_sim.simulation import Simulator, SimulationSettings
 from plant_sim.staff import Operator, Roster, RosterError
+from plant_sim.theme import apply_theme, brand_footer, brand_header, label
 
-st.set_page_config(page_title="Plant Simulator", layout="wide")
+st.set_page_config(page_title="Dezignatek | Plant Simulator", page_icon="🏭", layout="wide",
+                   menu_items={"About": "Dezignatek thermoform + cut & clash plant simulator."})
+apply_theme()
 
 ROSTER_CSV_PATH = "data/staff_roster.csv"
 STATION_OPTIONS = list(cfg.STATIONS.keys())
@@ -41,6 +44,11 @@ INTAKE_SOURCE = {
 
 def station_label(sid: str) -> str:
     return STATION_LABELS.get(sid, sid)
+
+
+def short_station_label(sid: str) -> str:
+    """'CNC 1536 (Cut & Clash)' -> 'CNC 1536' - for metric tiles, which truncate."""
+    return station_label(sid).split(" (")[0]
 
 
 def day_unit_for(route: str) -> str:
@@ -71,10 +79,11 @@ if "floor_last_seq" not in st.session_state:
 
 roster: Roster = st.session_state.roster
 
-st.title("Thermoform + Cut & Clash Plant Simulator")
+brand_header("Plant Simulator")
+st.markdown("# Plan the floor before it happens.")
 st.caption(
-    "CNC (Thermo: Series 1/2/3) -> Sanding -> MB Sander -> Cefla gluing line -> Press -> Packing, "
-    "and Optimising -> CNC 1536 (Cut & Clash: Melamine + Acrylic) -> Edge Band/Drilling -> Packing."
+    "CNC (Thermo: Series 1/2/3) → Sanding → MB Sander → Cefla gluing line → Press → Packing, "
+    "and Optimising → CNC 1536 (Cut & Clash: Melamine + Acrylic) → Edge Band/Drilling → Packing."
 )
 
 # ---------------------------------------------------------------------------
@@ -229,13 +238,14 @@ def kpi_strip(result) -> None:
                    f"DIFOT {rm.overall_difot_pct:.0f}%" if rm.has_completions else None,
                    delta_color="off")
     bottleneck = max(result.station_utilisation, key=result.station_utilisation.get)
-    cols[4].metric("Bottleneck", station_label(bottleneck),
+    cols[4].metric("Bottleneck", short_station_label(bottleneck),
                    f"{result.station_utilisation[bottleneck] * 100:.0f}% utilised", delta_color="off")
 
 
 tab_floor, tab_staff, tab_results = st.tabs(["🏭 Factory Floor", "Staff & Skills", "Simulation Results"])
 
 with tab_floor:
+    label("Factory floor", teal=True)
     st.subheader("Move people around the floor")
     st.caption("Each box is a station; each chip is a person on that shift. **Drag** a chip onto "
                "another station to change their home station, or into the other lane to change "
@@ -269,6 +279,7 @@ with tab_floor:
         st.caption("Full breakdown, charts and the live playback are on the **Simulation Results** tab.")
 
 with tab_staff:
+    label("Staff & skills", teal=True)
     st.subheader("Roster overview")
     roster_problems = roster.problems()
     if roster_problems:
@@ -403,7 +414,7 @@ with tab_results:
                   help="Work still inside the factory at the end of the run that has already "
                        "missed its target date. Not part of DIFOT (it counts as late when it "
                        "eventually completes).")
-        c3.metric("Bottleneck", station_label(bottleneck),
+        c3.metric("Bottleneck", short_station_label(bottleneck),
                   f"{result.station_utilisation[bottleneck] * 100:.0f}% utilised")
         c4.metric("Avg lead time (days)",
                   f"{result.overall_avg_lead_days:.1f}" if result.has_completions else "—",
@@ -442,6 +453,7 @@ with tab_results:
 
         # -- reality check against the real plant figures in config.py --
         st.divider()
+        label("Calibration", teal=True)
         st.subheader("Reality check - simulated month vs real plant history")
         if rs.horizon != "month":
             st.caption("Run the **month** horizon to compare against the real monthly figures.")
@@ -475,12 +487,14 @@ with tab_results:
                        "points at a rate, roster or mix number (see CALIBRATION_NOTES.md).")
 
         st.divider()
+        label("Playback", teal=True)
         st.subheader("Factory floor - live")
         st.caption("Play through the simulated period and watch units (m²) physically flow "
                    "station to station, with each box's current buffer, staffing and shift status.")
         components.html(build_floor_html(result.trace, result.staffing_by_shift), height=520, scrolling=True)
 
         st.divider()
+        label("Charts", teal=True)
         st.subheader("Station utilisation (output / capacity while running)")
         util_df = pd.DataFrame({
             "Station": [station_label(s) for s in result.station_utilisation if s != "admin"],
@@ -543,3 +557,5 @@ with tab_results:
                 st.caption("Most often idle: " + ", ".join(f"{n} ({c} shifts)" for n, c in idle_people.head(5).items()))
             with st.expander("Raw attendance log (per operator, per day)"):
                 st.dataframe(att_df, width="stretch")
+
+brand_footer(f"{len(roster.operators)} staff on roster · see CALIBRATION_NOTES.md for what is real vs assumed")

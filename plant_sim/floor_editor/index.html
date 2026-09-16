@@ -4,54 +4,63 @@
 <meta charset="utf-8">
 <title>Factory floor editor</title>
 <style>
-  :root { --bg:#0f1620; --panel:#16202c; --border:#253242; --text:#e6edf3; --muted:#8b98a5;
-          --day:#4bc9c9; --aft:#e0a83e; --accent:#4472C4; --ok:#3fb950; --warn:#e0a83e; --bad:#e5484d;
-          --chip:#1d2a3a; }
+  @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500&family=Nunito+Sans:wght@400;600;700;800&display=swap');
+  /* Dezignatek palette - keep in step with plant_sim/theme.py */
+  :root { --teal:#00C3B1; --teal-dark:#00A897; --navy:#171F32; --muted:#6B7280; --panel:#F4F6F8; --line:#E3E7EC;
+          --white:#FFFFFF; --amber:#E0A83E; --red:#E5484D; --green:#2FB37A;
+          --day:#00C3B1; --aft:#E0A83E; --ok:#2FB37A; --warn:#E0A83E; --bad:#E5484D;
+          --heading-font:"Sansation Light","Sansation","Quicksand","Nunito Sans",sans-serif;
+          --body-font:"Avenir LT Std Book","Avenir","Nunito Sans","Segoe UI",sans-serif;
+          --label-font:"Avenir LT Std Black","Avenir LT Std Heavy","Avenir","Nunito Sans","Segoe UI",sans-serif; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family:Arial,Helvetica,sans-serif; font-size:12px; }
-  .lane { border:1px solid var(--border); border-radius:10px; padding:8px 10px 10px; margin-bottom:12px; background:var(--panel); }
-  .lane-title { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; margin-bottom:6px; }
+  body { margin:0; background:var(--white); color:var(--navy); font-family:var(--body-font); font-size:12px; }
+  .lane { border:1px solid var(--line); border-radius:8px; padding:10px 12px 12px; margin-bottom:12px; background:var(--panel); }
+  .lane-title { display:flex; align-items:center; gap:8px; font-family:var(--label-font); font-size:12px; letter-spacing:1.9px;
+                text-transform:uppercase; margin-bottom:8px; color:var(--navy); }
   .lane-title .dot { width:9px; height:9px; border-radius:50%; }
-  .lane.day .dot { background:var(--day); box-shadow:0 0 6px var(--day); }
-  .lane.aft .dot { background:var(--aft); box-shadow:0 0 6px var(--aft); }
-  .lane-title .hint { font-weight:400; color:var(--muted); font-size:11px; margin-left:auto; }
+  .lane.day .dot { background:var(--day); }
+  .lane.aft .dot { background:var(--aft); }
+  .lane-title .hint { font-family:var(--body-font); letter-spacing:0; text-transform:none; color:var(--muted); font-size:11px; margin-left:auto; }
   .grid { display:grid; grid-template-columns:repeat(6, minmax(118px, 1fr)) minmax(118px, 1fr) minmax(96px, 0.8fr);
-          grid-template-rows:auto auto; gap:6px; }
+          grid-template-rows:auto auto; gap:8px; }
   .row-label { grid-column:1 / -1; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
-  .station { background:#101823; border:1px solid var(--border); border-radius:9px; padding:7px 8px 8px; min-height:118px;
-             display:flex; flex-direction:column; transition:border-color .15s, background-color .15s; }
+  .station { background:var(--white); border:1px solid var(--line); border-radius:6px; padding:9px 10px 10px; min-height:118px;
+             display:flex; flex-direction:column; transition:border-color .15s, background-color .15s, box-shadow .15s;
+             box-shadow:0 1px 2px rgba(23,31,50,.04); }
   .station.span2 { grid-row: span 2; }
   .station.empty-slot { visibility:hidden; }
-  .station.over-ok { border-color:var(--ok); background:#12211a; }
-  .station.over-learn { border-color:var(--warn); background:#241f12; }
-  .st-head { display:flex; align-items:baseline; gap:5px; margin-bottom:4px; }
+  .station.over-ok { border-color:var(--green); background:#EEFBF5; box-shadow:0 0 0 2px rgba(47,179,122,.25); }
+  .station.over-learn { border-color:var(--amber); background:#FFF8EA; box-shadow:0 0 0 2px rgba(224,168,62,.25); }
+  .st-head { display:flex; align-items:baseline; gap:5px; margin-bottom:3px; }
   .st-icon { font-size:14px; }
-  .st-name { font-size:11px; font-weight:700; line-height:1.15; }
-  .st-cover { font-size:10px; color:var(--muted); margin-bottom:6px; display:flex; align-items:center; gap:5px; }
+  .st-name { font-family:var(--heading-font); font-size:13px; font-weight:400; line-height:1.15; color:var(--navy); }
+  .st-cover { font-size:10px; color:var(--muted); margin-bottom:7px; display:flex; align-items:center; gap:5px; }
   .cov-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
   .cov-dot.ok { background:var(--ok); } .cov-dot.warn { background:var(--warn); } .cov-dot.bad { background:var(--bad); }
   .chips { display:flex; flex-direction:column; gap:4px; flex:1; min-height:24px; }
-  .chip { display:flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--border); border-radius:6px;
-          padding:3px 6px; cursor:grab; user-select:none; font-size:11px; line-height:1.2; }
+  .chip { display:flex; align-items:center; gap:6px; background:var(--panel); border:1px solid var(--line); border-radius:16px;
+          padding:3px 8px 3px 3px; cursor:grab; user-select:none; font-size:11px; line-height:1.2; color:var(--navy); }
+  .chip:hover { border-color:var(--teal); }
   .chip:active { cursor:grabbing; }
   .chip.dragging { opacity:.4; }
-  .chip.surplus { border-style:dashed; opacity:.75; }
-  .avatar { width:20px; height:20px; border-radius:50%; background:var(--accent); color:#fff; font-size:9px; font-weight:700;
+  .chip.surplus { border-style:dashed; opacity:.7; }
+  .avatar { width:20px; height:20px; border-radius:50%; background:var(--teal); color:#fff; font-size:9px; font-family:var(--label-font);
             display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+  .lane.aft .avatar { background:var(--aft); }
   .chip .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .chip .sk { font-size:9px; color:var(--muted); flex:0 0 auto; }
+  .chip .sk { font-size:9px; color:var(--teal); font-family:var(--label-font); flex:0 0 auto; }
   .footer { display:flex; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:10.5px; padding:2px 4px; }
-  .footer b { color:var(--text); }
-  .flash { position:fixed; right:12px; bottom:12px; background:#1d2a3a; border:1px solid var(--accent); border-radius:8px;
-           padding:8px 12px; font-size:11.5px; opacity:0; transition:opacity .25s; pointer-events:none; }
+  .footer b { color:var(--navy); }
+  .flash { position:fixed; right:12px; bottom:12px; background:var(--navy); color:#fff; border-radius:20px;
+           padding:8px 14px; font-size:11.5px; opacity:0; transition:opacity .25s; pointer-events:none; }
   .flash.show { opacity:1; }
 </style>
 </head>
 <body>
   <div id="root"></div>
   <div class="footer">
-    <span>Drag a person onto any station, in either shift lane. <b>Green</b> border = already qualified there,
-      <b>amber</b> = will be set as their new home (their old home is kept as a skill).</span>
+    <span>Drag a person onto any station, in either shift lane. <b style="color:var(--green)">Green</b> border = already qualified there,
+      <b style="color:var(--amber)">amber</b> = will be set as their new home (their old home is kept as a skill).</span>
     <span>Coverage dot: <b style="color:var(--ok)">●</b> at/above ideal crew &nbsp; <b style="color:var(--warn)">●</b> below ideal
       &nbsp; <b style="color:var(--bad)">●</b> nobody &nbsp; dashed chip = more people than the machine can use.</span>
   </div>
