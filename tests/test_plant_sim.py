@@ -568,12 +568,15 @@ class FloorEditorTests(unittest.TestCase):
         self.assertEqual(f([("B1224", 1.0), ("C6", k)]), (m * k, m))       # one person also running C6
         self.assertEqual(f([("B1224", 1.0), ("Weeke (old)", k)]), (0.0, m + m * k))
         self.assertEqual(f([("B1224", 1.0), ("C6", k), ("C6", 1.0)]), (m, m))   # a real C6 operator caps it at 1
+        self.assertAlmostEqual(f([("", 0.5)])[1], 0.5 * m)                    # half a floater = half a machine
+        c6, main = f([("C6", 1.0), ("C6", 1.0)])                              # 2nd whole person moves on
+        self.assertAlmostEqual(c6, m); self.assertAlmostEqual(main, m)
 
     def test_second_machine_copy_and_unlink(self):
         r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day", machine="B1224"),
                     Operator("r", "Ray", "cnc_thermo", shift="day", machine="C6")])
         msg = apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day", "to_machine": "C6", "copy": True})
-        self.assertIn("also runs C6", msg)
+        self.assertIn("also at CNC (Thermo) / C6", msg)
         self.assertEqual((r.get("j").machine, r.get("j").machine_2), ("B1224", "C6"))
         r.validate()
         # not allowed: onto own machine, another station, another shift, or without a home machine
@@ -583,11 +586,45 @@ class FloorEditorTests(unittest.TestCase):
         apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day", "to_machine": "C6"})
         self.assertEqual((r.get("j").machine, r.get("j").machine_2), ("C6", ""))
         apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day", "to_machine": "Weeke (old)", "copy": True})
-        self.assertEqual(apply_move(r, {"op_id": "j", "unlink": True}), "Jay: no longer also runs Weeke (old)")
+        self.assertEqual(apply_move(r, {"op_id": "j", "unlink": True}), "Jay: no longer also at CNC (Thermo) / Weeke (old)")
         self.assertEqual(r.get("j").machine_2, "")
         bad = Roster([Operator("x", "X", "cnc_thermo", machine="B1224", machine_2="B1224")])
         with self.assertRaises(RosterError):
             bad.validate()
+
+    def test_split_across_two_stations(self):
+        r = Roster([Operator("h", "Hai", "sanding", shift="day", skills={"despatch"}),
+                    Operator("d", "Dee", "despatch", shift="day")])
+        msg = apply_move(r, {"op_id": "h", "to_station": "despatch", "to_shift": "day", "copy": True})
+        self.assertIn("also at Packing / Despatch", msg)
+        self.assertEqual((r.get("h").station_2, r.get("h").second_station), ("despatch", "despatch"))
+        r.validate()
+        # not skilled / other shift -> refused
+        self.assertIsNone(apply_move(r, {"op_id": "d", "to_station": "sanding", "to_shift": "day", "copy": True}))
+        self.assertIsNone(apply_move(r, {"op_id": "h", "to_station": "despatch", "to_shift": "aft", "copy": True}))
+        # headcount is fractional at both
+        res = Simulator(r, settings(horizon="day")).run()
+        share = cfg.SPLIT_STATION_SHARE
+        self.assertAlmostEqual(res.trace[2]["ops"]["sanding"], 1.0 - share)
+        self.assertAlmostEqual(res.trace[2]["ops"]["despatch"], 1.0 + share)
+        self.assertIn("Hai (also)", res.staffing_by_shift["0|day"]["despatch"])
+        # unlink -> whole person at home again
+        self.assertIn("no longer also at", apply_move(r, {"op_id": "h", "unlink": True}))
+        self.assertFalse(r.get("h").is_split)
+        # a normal move resets a split
+        apply_move(r, {"op_id": "h", "to_station": "despatch", "to_shift": "day", "copy": True})
+        apply_move(r, {"op_id": "h", "to_station": "despatch", "to_shift": "day"})
+        self.assertFalse(r.get("h").is_split)
+
+    def test_split_only_applies_while_second_station_is_running(self):
+        # Sanding (thermo crew, 4 days) split with drilling (cutclash, 5 days):
+        # on Friday drilling runs but sanding doesn't -> the allocator floats
+        # them (whole person); on Monday hour 20 sanding is off... simplest
+        # check: at an hour when drilling is closed, the whole person is at sanding.
+        r = Roster([Operator("h", "Hai", "sanding", shift="day", skills={"drilling"}, station_2="drilling")])
+        res = Simulator(r, settings(horizon="day")).run()
+        self.assertAlmostEqual(res.trace[2]["ops"]["sanding"], 1.0 - cfg.SPLIT_STATION_SHARE)   # both open
+        self.assertAlmostEqual(res.trace[9]["ops"]["sanding"], 1.0)   # drilling's 8h day is over, sanding still on
 
     def test_second_machine_adds_capacity_in_a_run(self):
         base = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.STATIONS if sid not in ("admin", "cnc_thermo")

@@ -662,6 +662,14 @@ CNC_THERMO_SPECIAL_MACHINE = "C6"
 # close to 1 for long Series 3 cuts, lower for quick Series 1 boards.
 CNC_SECOND_MACHINE_FACTOR = 0.8
 
+# Anyone can be split across TWO stations (roster "station_2", or Ctrl-drag
+# on the floor): they count as this share of a person at the second station
+# and (1 - share) at home. [ASSUMPTION] an even 50/50 split. The one
+# exception is a CNC operator running a second Thermo CNC: the machine cuts
+# unattended, so they stay a full person on their own machine and the
+# second runs at CNC_SECOND_MACHINE_FACTOR (above).
+SPLIT_STATION_SHARE = 0.5
+
 # [ASSUMPTION] share of Thermo intake that is a "special order" (non-standard
 # work routed to C6). No data yet - replace with the real share when known.
 DEFAULT_SPECIAL_ORDER_PCT = 10.0

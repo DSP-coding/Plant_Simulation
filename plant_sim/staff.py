@@ -20,7 +20,8 @@ from pathlib import Path
 
 from plant_sim.config import DEFAULT_ABSENCE_RATE_PCT, SHIFT_LABELS, STATIONS
 
-ROSTER_COLUMNS = ["id", "name", "home_station", "shift", "skills", "absence_rate_pct", "machine", "machine_2", "notes"]
+ROSTER_COLUMNS = ["id", "name", "home_station", "shift", "skills", "absence_rate_pct", "machine",
+                  "station_2", "machine_2", "notes"]
 
 
 class RosterError(ValueError):
@@ -37,7 +38,26 @@ class Operator:
     shift: str = "day"                   # "day" or "aft" - which shift they're rostered to
     absence_rate_pct: float = DEFAULT_ABSENCE_RATE_PCT  # per-person override
     machine: str = ""                    # which named machine at home_station they normally run (optional)
-    machine_2: str = ""                  # a second machine they also run at the same time (CNC operators)
+    station_2: str = ""                  # a second station they also work at the same time (split attention)
+    machine_2: str = ""                  # ...and which named machine there, if that station has machines
+
+    @property
+    def second_station(self) -> str:
+        """Where their split time goes: station_2, or home when machine_2 is
+        a second machine at their own station (the CNC-runs-two case)."""
+        if self.station_2:
+            return self.station_2
+        return self.home_station if self.machine_2 else ""
+
+    @property
+    def is_split(self) -> bool:
+        return bool(self.station_2 or self.machine_2)
+
+    @property
+    def runs_second_cnc(self) -> bool:
+        """A Thermo CNC operator tending a second Thermo CNC (unattended machine)."""
+        return (self.home_station == "cnc_thermo" and self.second_station == "cnc_thermo"
+                and bool(self.machine) and bool(self.machine_2) and self.machine_2 != self.machine)
     notes: str = ""
 
     def can_work(self, station_id: str) -> bool:
@@ -74,14 +94,27 @@ class Operator:
             out.append(f"{who}: shift must be one of {SHIFT_LABELS}, got {self.shift!r}")
         if self.home_station in STATIONS:
             valid = STATIONS[self.home_station].machines
-            for label_, m in (("machine", self.machine), ("machine_2", self.machine_2)):
-                if m and m not in valid:
-                    out.append(f"{who}: {label_} {m!r} is not one of {self.home_station}'s machines "
-                               f"({', '.join(valid) or 'none'})")
-            if self.machine_2 and self.machine_2 == self.machine:
-                out.append(f"{who}: machine_2 is the same as machine ({self.machine!r})")
-            if self.machine_2 and not self.machine:
-                out.append(f"{who}: machine_2 is set but machine is empty")
+            if self.machine and self.machine not in valid:
+                out.append(f"{who}: machine {self.machine!r} is not one of {self.home_station}'s machines "
+                           f"({', '.join(valid) or 'none'})")
+        if self.station_2:
+            if self.station_2 not in STATIONS:
+                out.append(f"{who}: unknown station_2 {self.station_2!r}")
+            elif self.station_2 not in self.all_qualified_stations:
+                out.append(f"{who}: station_2 {self.station_2!r} is not their home or one of their skills")
+        second = self.second_station
+        if self.machine_2 and second in STATIONS:
+            valid2 = STATIONS[second].machines
+            if self.machine_2 not in valid2:
+                out.append(f"{who}: machine_2 {self.machine_2!r} is not one of {second}'s machines "
+                           f"({', '.join(valid2) or 'none'})")
+            if second == self.home_station:
+                if not self.machine:
+                    out.append(f"{who}: machine_2 at their own station needs machine set too")
+                elif self.machine_2 == self.machine:
+                    out.append(f"{who}: machine_2 is the same as machine ({self.machine!r})")
+        if self.station_2 and self.station_2 == self.home_station and not self.machine_2:
+            out.append(f"{who}: station_2 is their home station - set machine_2 for a second machine, or clear it")
         try:
             rate = float(self.absence_rate_pct)
             if not (0.0 <= rate <= 100.0):
@@ -190,6 +223,7 @@ class Roster:
                     skills=extra_skills,
                     absence_rate_pct=rate,
                     machine=(row.get("machine") or "").strip(),
+                    station_2=(row.get("station_2") or "").strip(),
                     machine_2=(row.get("machine_2") or "").strip(),
                     notes=(row.get("notes") or "").strip(),
                 ))
@@ -212,6 +246,6 @@ class Roster:
                 writer.writerow([
                     op.id, op.name, op.home_station, op.shift,
                     ";".join(sorted(op.skills - {op.home_station})), op.absence_rate_pct, op.machine,
-                    op.machine_2, op.notes,
+                    op.station_2, op.machine_2, op.notes,
                 ])
         os.replace(tmp, path)

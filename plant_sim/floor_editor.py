@@ -102,8 +102,8 @@ def floor_editor(roster: Roster, shift_schedules: dict[str, cfg.ShiftSchedule] |
     }
     staff = [
         {"id": op.id, "name": op.name, "home": op.home_station, "shift": op.shift,
-         "machine": op.machine, "machine_2": op.machine_2, "skills": sorted(op.skills),
-         "absence": op.absence_rate_pct}
+         "machine": op.machine, "station_2": op.second_station, "machine_2": op.machine_2,
+         "skills": sorted(op.skills), "absence": op.absence_rate_pct}
         for op in roster.operators
     ]
     shifts = [dict(lane, hint=_crew_hint(lane["id"], shift_schedules)) for lane in SHIFT_LANES]
@@ -127,27 +127,33 @@ def apply_move(roster: Roster, event: dict) -> str | None:
     if op is None:
         return None
     if event.get("unlink"):
-        # The x on a ghost chip: stop running the second machine.
-        if not op.machine_2:
+        # The x on a ghost chip: back to one station.
+        if not op.is_split:
             return None
-        gone, op.machine_2 = op.machine_2, ""
-        return f"{op.name}: no longer also runs {gone}"
+        gone = _second_label(op)
+        op.station_2, op.machine_2 = "", ""
+        return f"{op.name}: no longer also at {gone}"
     to_station = event.get("to_station")
     to_shift = event.get("to_shift")
     to_machine = str(event.get("to_machine") or "")
     if to_station not in cfg.STATIONS or to_shift not in cfg.SHIFT_LABELS:
         return None
     if event.get("copy"):
-        # Ctrl-drag: ALSO run a second machine, staying on the home machine.
-        # Only within the same station and shift, onto a different machine.
-        if (to_station != op.home_station or to_shift != op.shift or not to_machine
-                or to_machine not in cfg.STATIONS[to_station].machines or not op.machine
-                or to_machine == op.machine):
+        # Ctrl-drag: ALSO work a second station (or a second machine at their
+        # own station), staying at home. Same shift, must be skilled for it,
+        # and not the very spot they're already on.
+        if to_shift != op.shift or to_station not in op.all_qualified_stations:
             return None
-        if op.machine_2 == to_machine:
+        if to_machine and to_machine not in cfg.STATIONS[to_station].machines:
+            to_machine = ""
+        if to_station == op.home_station and (not to_machine or to_machine == op.machine or not op.machine):
+            return None                  # a second machine at home needs a different, named machine
+        if (op.second_station, op.machine_2) == (to_station, to_machine):
             return None
+        op.station_2 = "" if to_station == op.home_station else to_station
         op.machine_2 = to_machine
-        return f"{op.name}: also runs {to_machine} (with {op.machine})"
+        home_label = cfg.STATIONS[op.home_station].label + (f" / {op.machine}" if op.machine else "")
+        return f"{op.name}: also at {_second_label(op)} (with {home_label})"
     if to_station not in op.all_qualified_stations:
         return None                      # not skilled for it - the floor refuses the drop too
     if to_machine and to_machine not in cfg.STATIONS[to_station].machines:
@@ -159,12 +165,12 @@ def apply_move(roster: Roster, event: dict) -> str | None:
         op.skills.discard(to_station)
         op.home_station = to_station
         op.machine = ""
-        op.machine_2 = ""
+        op.station_2, op.machine_2 = "", ""          # a move resets any split
         changes.append(f"home {cfg.STATIONS[old_home].label} → {cfg.STATIONS[to_station].label}")
     if to_machine != op.machine:
         changes.append(f"machine {op.machine or '-'} → {to_machine or '-'}")
         op.machine = to_machine
-        if op.machine_2 == to_machine or not to_machine:
+        if not op.station_2 and (op.machine_2 == to_machine or not to_machine):
             op.machine_2 = ""
     if to_shift != op.shift:
         changes.append(f"shift {op.shift} → {to_shift}")
@@ -172,6 +178,13 @@ def apply_move(roster: Roster, event: dict) -> str | None:
     if not changes:
         return None
     return f"{op.name}: " + ", ".join(changes)
+
+
+def _second_label(op) -> str:
+    second = op.second_station
+    if not second:
+        return ""
+    return cfg.STATIONS[second].label + (f" / {op.machine_2}" if op.machine_2 else "")
 
 
 def snapshot(roster: Roster) -> list:

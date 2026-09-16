@@ -273,6 +273,17 @@ and lifts the Thermo remake penalty from +0.77 to +0.93 working days.
   station that is their home or one of their extra skills; other drops
   are refused (red). New skills are given on the Staff & Skills tab.
 
+## Session 4f - anyone can be split across two stations
+
+Generalised from the CNC case: Ctrl-drag anyone onto a second station
+they're skilled for (same shift) and they work both - half a person at
+each (`SPLIT_STATION_SHARE` = 0.5 [ASSUMPTION]). A CNC operator's second
+Thermo CNC is the exception and keeps the unattended-machine rule below.
+The split only applies while they're at their home station and the
+second station is running on their shift; if the allocator moves them to
+cover elsewhere they're a whole person there. Roster columns `station_2`
+/ `machine_2`; the playback shows them on both boxes as "(also)".
+
 ## Session 4e - one operator running two CNCs
 
 Per the plant, one CNC operator often runs two machines at once (typically

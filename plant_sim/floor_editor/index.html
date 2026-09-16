@@ -82,8 +82,9 @@
     <span>Drag a person onto a station they're skilled for (home or extra skill), in either shift lane.
       <b style="color:var(--green)">Green</b> border = allowed, <b style="color:var(--red)">red</b> = not skilled for it
       (give them the skill on the Staff &amp; Skills tab first). Their old home is kept as a skill.</span>
-    <span><b style="color:var(--teal)">Ctrl + drag</b> a CNC operator onto another CNC to have them run both
-      (they stay on their own machine; the second runs at a reduced rate). Click × on the ghost to stop.</span>
+    <span><b style="color:var(--teal)">Ctrl + drag</b> anyone onto a second station they're skilled for to split them
+      across both (half a person at each; a CNC operator's second CNC runs unattended at a reduced rate instead).
+      Click × on the ghost to undo.</span>
     <span>Coverage dot: <b style="color:var(--ok)">●</b> at/above ideal crew &nbsp; <b style="color:var(--warn)">●</b> below ideal
       &nbsp; <b style="color:var(--bad)">●</b> nobody &nbsp; dashed chip = more people than the machine can use.</span>
   </div>
@@ -158,16 +159,24 @@ function render(args) {
 }
 
 function makeGhostChip(p, st) {
-  // The same person shown on the second machine they also run.
+  // The same person shown at the second station / machine they also work.
   const chip = document.createElement("div");
   chip.className = "chip ghost";
-  chip.title = `${p.name} also runs ${p.machine_2} while on ${p.machine}\n(second machine runs at reduced rate)`;
+  const homeLabel = ARGS.stations[p.home].label + (p.machine ? " / " + p.machine : "");
+  const secondCnc = p.station_2 === p.home && p.machine_2;
+  chip.title = `${p.name} also works here while at ${homeLabel}\n` +
+    (secondCnc ? "(second CNC runs unattended at a reduced rate)" : "(their time is split between the two)");
   chip.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="nm">${p.name}</span><span class="also">also</span>`;
   const x = document.createElement("button");
-  x.className = "unlink"; x.textContent = "×"; x.title = `Stop ${p.name} running ${p.machine_2}`;
-  x.addEventListener("click", e => { e.stopPropagation(); flash(`${p.name} no longer runs ${p.machine_2}`); emit({ op_id: p.id, unlink: true }); });
+  x.className = "unlink"; x.textContent = "×"; x.title = `${p.name}: back to ${homeLabel} only`;
+  x.addEventListener("click", e => { e.stopPropagation(); flash(`${p.name}: back to ${homeLabel} only`); emit({ op_id: p.id, unlink: true }); });
   chip.appendChild(x);
   return chip;
+}
+
+function alsoHere(everyone, sid, machine) {
+  // People whose second station / machine is this box.
+  return everyone.filter(p => p.station_2 === sid && (machine ? p.machine_2 === machine : !p.machine_2));
 }
 
 function makeChip(p, sid, shiftId, st) {
@@ -181,7 +190,7 @@ function makeChip(p, sid, shiftId, st) {
     (p.skills.length ? `<span class="sk">+${p.skills.length}</span>` : "");
   chip.addEventListener("dragstart", e => {
     dragging = { opId: p.id, fromStation: sid, fromShift: shiftId, fromMachine: p.machine || "", skills: p.skills, name: p.name,
-                 canCopy: !!(p.machine && ARGS.stations[sid].machines && ARGS.stations[sid].machines.length > 1) };
+                 isHome: sid === p.home };
     chip.classList.add("dragging");
     e.dataTransfer.effectAllowed = "move";
     try { e.dataTransfer.setData("text/plain", p.id); } catch (_) {}
@@ -196,9 +205,8 @@ function wireDropTarget(el, sid, shiftId, machine, st) {
     e.preventDefault(); e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     clearHighlights();
-    const copying = e.ctrlKey && dragging.canCopy && dragging.fromStation === sid && dragging.fromShift === shiftId
-                    && machine && machine !== dragging.fromMachine;
     const qualified = dragging.fromStation === sid || dragging.skills.includes(sid);
+    const copying = e.ctrlKey && copyAllowed(dragging, sid, shiftId, machine, qualified);
     el.classList.toggle("over-copy", copying);
     el.classList.toggle("over-ok", !copying && qualified);
     el.classList.toggle("over-learn", !copying && !qualified);
@@ -209,9 +217,15 @@ function wireDropTarget(el, sid, shiftId, machine, st) {
     if (!dragging) return;
     const d = dragging;
     clearHighlights();
-    if (e.ctrlKey && d.canCopy && d.fromStation === sid && d.fromShift === shiftId && machine && machine !== d.fromMachine) {
-      flash(`${d.name} also runs ${machine} (with ${d.fromMachine})`);
-      emit({ op_id: d.opId, to_station: sid, to_shift: shiftId, to_machine: machine, copy: true });
+    const qualifiedNow = d.fromStation === sid || d.skills.includes(sid);
+    if (e.ctrlKey) {
+      if (!copyAllowed(d, sid, shiftId, machine, qualifiedNow)) {
+        flash(qualifiedNow ? `Can't split ${d.name} onto that spot (same shift, a different place, and skilled for it)`
+                           : `${d.name} isn't skilled for ${st.label} - add the skill on the Staff & Skills tab first`);
+        return;
+      }
+      flash(`${d.name} also at ${st.label}${machine ? " / " + machine : ""}`);
+      emit({ op_id: d.opId, to_station: sid, to_shift: shiftId, to_machine: machine || "", copy: true });
       return;
     }
     const sameSpot = d.fromStation === sid && d.fromShift === shiftId && (d.fromMachine || "") === (machine || "");
@@ -232,25 +246,26 @@ function stationBox(sid, shiftId, staffByKey, children, machine) {
   // A box for ONE named machine of a station shows only the people on that
   // machine, is staffed "ideally" by one person, and drops record the machine.
   const people = machine ? everyone.filter(p => p.machine === machine) : everyone;
-  const alsoHere = machine ? everyone.filter(p => p.machine_2 === machine).length : 0;
+  const ghosts = alsoHere(ARGS.staff.filter(p => p.shift === shiftId), sid, machine);
+  const alsoHereN = ghosts.length;
   const ideal = machine ? 1 : st.ideal_ops;
   const maxUseful = machine ? 1 : st.max_useful_ops;
   const box = document.createElement("div");
   box.className = "station" + (children.length ? " has-children" : "");
   box.dataset.station = sid; box.dataset.shift = shiftId;
-  const cov = coverageClass(people.length + alsoHere, ideal);
+  const cov = coverageClass(people.length + alsoHereN, ideal);
   const capNote = (maxUseful !== null && people.length > maxUseful)
-    ? ` (${people.length - maxUseful} surplus)` : (alsoHere && !people.length ? " (shared)" : "");
+    ? ` (${people.length - maxUseful} surplus)` : (alsoHereN ? ` (${alsoHereN} shared)` : "");
   const title = machine ? machine : st.label;
   const sub = machine ? `<div class="unassigned-label">${st.label}</div>` : "";
   box.innerHTML = `
     <div class="st-head"><span class="st-icon">${st.icon}</span><span class="st-name">${title}</span></div>
-    ${sub}<div class="st-cover"><span class="cov-dot ${cov}"></span>${people.length + alsoHere} staff / ideal ${ideal}${capNote}</div>`;
+    ${sub}<div class="st-cover"><span class="cov-dot ${cov}"></span>${people.length + alsoHereN} staff / ideal ${ideal}${capNote}</div>`;
 
   if (machine) {
     const chips = document.createElement("div"); chips.className = "chips";
     people.forEach(p => chips.appendChild(makeChip(p, sid, shiftId, st)));
-    everyone.filter(p => p.machine_2 === machine).forEach(p => chips.appendChild(makeGhostChip(p, st)));
+    ghosts.forEach(p => chips.appendChild(makeGhostChip(p, st)));
     box.appendChild(chips);
     wireDropTarget(box, sid, shiftId, machine, st);
     return box;
@@ -283,6 +298,7 @@ function stationBox(sid, shiftId, staffByKey, children, machine) {
       if (st.max_useful_ops !== null && i >= st.max_useful_ops) chip.classList.add("surplus");
       chips.appendChild(chip);
     });
+    ghosts.forEach(p => chips.appendChild(makeGhostChip(p, st)));
     box.appendChild(chips);
   }
 
@@ -294,6 +310,15 @@ function stationBox(sid, shiftId, staffByKey, children, machine) {
   }
   wireDropTarget(box, sid, shiftId, "", st);
   return box;
+}
+
+function copyAllowed(d, sid, shiftId, machine, qualified) {
+  // Ctrl-drag = split this person onto a second place: same shift, skilled
+  // for it, not the spot they're already on. A second machine at their own
+  // station must be a different, named machine.
+  if (!qualified || d.fromShift !== shiftId) return false;
+  if (sid === d.fromStation) return !!(machine && d.fromMachine && machine !== d.fromMachine);
+  return true;
 }
 
 function clearHighlights() {

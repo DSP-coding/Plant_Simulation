@@ -291,10 +291,11 @@ class Simulator:
         # Which Thermo CNC(s) each person mans when they're on the CNCs: their
         # own machine at full weight, a second machine (if any) at the
         # split-attention weight, floaters/cover untagged.
-        machines_by_op = {
-            op.id: ([(op.machine, 1.0)] + ([(op.machine_2, cfg.CNC_SECOND_MACHINE_FACTOR)] if op.machine_2 else [])
-                    if op.home_station == "cnc_thermo" else [("", 1.0)])
-            for op in self.roster.operators}
+        # How each person's time is split when they're working their home
+        # station: [(station, weight, machine)]. A whole person at one place
+        # unless they've been split across two (see cfg.SPLIT_STATION_SHARE).
+        presence_by_op = {op.id: self._presence(op) for op in self.roster.operators}
+        ops_by_id = {op.id: op for op in self.roster.operators}
 
         cum_intake = cum_completed = cum_remade = 0.0
         # Whole-run totals (warm-up included) for the mass-balance self-check.
@@ -371,6 +372,8 @@ class Simulator:
                         station = assignment.get(op.id) if op.id not in absent_ids else None
                         if station:
                             names_by_station.setdefault(station, []).append(op.name)
+                            if station == op.home_station and op.second_station and op.second_station != station:
+                                names_by_station.setdefault(op.second_station, []).append(op.name + " (also)")
                         attendance_log.append({
                             "day": record_day_index, "operator_id": op.id, "operator_name": op.name,
                             "shift": label,
@@ -379,11 +382,9 @@ class Simulator:
                         })
                     staffing_by_shift[f"{record_day_index}|{label}"] = names_by_station
 
-            ops_per_station = self._headcount_per_station(allocation_cache, day_index, label_by_station)
+            ops_per_station, cnc_tags = self._headcount_per_station(
+                allocation_cache, day_index, label_by_station, presence_by_op, ops_by_id)
             cnc_label = label_by_station["cnc_thermo"]
-            cnc_tags = ([tag for oid, st in allocation_cache.get((day_index, cnc_label), {}).items()
-                         if st == "cnc_thermo" for tag in machines_by_op.get(oid, [("", 1.0)])]
-                        if cnc_label else [])
             c6_minutes, main_minutes = self._cnc_thermo_lanes(cnc_tags)
             if recording and cnc_label:
                 lanes["c6_active_hours"] += 1
@@ -612,19 +613,53 @@ class Simulator:
         return "idle"              # rostered on, but nothing they can do is running
 
     @staticmethod
-    def _headcount_per_station(allocation_cache, day_index: int,
-                                label_by_station: dict[str, str | None]) -> dict[str, int]:
-        """How many people are on each station THIS hour: read from the
-        snapshot for whichever shift that station's own crew is on."""
-        counts = {sid: 0 for sid in cfg.STATIONS}
+    def _presence(op) -> list[tuple[str, float, str]]:
+        """Where a person's time goes when the allocator has them at their
+        HOME station, as [(station, weight, machine)]. Someone split across
+        two stations is a fraction of a person at each; a CNC operator
+        running a second Thermo CNC stays a whole person on their own
+        machine and the unattended second one runs at a reduced rate."""
+        home, second = op.home_station, op.second_station
+        if not second:
+            return [(home, 1.0, op.machine)]
+        if op.runs_second_cnc:
+            return [(home, 1.0, op.machine), (home, cfg.CNC_SECOND_MACHINE_FACTOR, op.machine_2)]
+        share = cfg.SPLIT_STATION_SHARE
+        return [(home, 1.0 - share, op.machine), (second, share, op.machine_2)]
+
+    @staticmethod
+    def _headcount_per_station(allocation_cache, day_index: int, label_by_station: dict[str, str | None],
+                                presence_by_op, ops_by_id) -> tuple[dict[str, float], list]:
+        """How much of a person is on each station THIS hour (people split
+        across two stations count fractionally), read from the snapshot for
+        whichever shift that station's own crew is on. Also returns the
+        (machine, weight) tags for everyone on the Thermo CNCs, for the C6
+        lane logic. A split only applies while the person is at their home
+        station and the second station is running on the same shift; moved
+        by the allocator, they are a whole person wherever they were sent."""
+        counts = {sid: 0.0 for sid in cfg.STATIONS}
+        cnc_tags: list = []
         for sid, label in label_by_station.items():
             if label is None:
                 continue
             assignment = allocation_cache.get((day_index, label))
             if not assignment:
                 continue
-            counts[sid] = sum(1 for st in assignment.values() if st == sid)
-        return counts
+            for op_id, st in assignment.items():
+                if st is None:
+                    continue
+                op = ops_by_id[op_id]
+                parts = presence_by_op[op_id] if st == op.home_station else [(st, 1.0, "")]
+                # if the second station isn't running right now, the whole person is at home
+                if len(parts) == 2 and parts[1][0] != parts[0][0] and label_by_station.get(parts[1][0]) != label:
+                    parts = [(parts[0][0], 1.0, parts[0][2])]
+                for where, w, machine in parts:
+                    if where != sid:
+                        continue
+                    counts[sid] += w
+                    if sid == "cnc_thermo":
+                        cnc_tags.append((machine, w))
+        return counts, cnc_tags
 
     # -----------------------------------------------------------------
     # Capacity
@@ -686,21 +721,25 @@ class Simulator:
         machines = list(station.machines)
         tags = [(t, 1.0) if isinstance(t, str) else (t[0], float(t[1])) for t in machine_tags]
         weight = {m: 0.0 for m in machines}
-        spare = 0
-        for m, w in tags:
+        spare = 0.0
+        # Whole people first, so a real operator on a machine takes precedence
+        # over someone's split-attention share of it (which is then simply
+        # not needed - it was tied to that machine, it doesn't become spare).
+        for m, w in sorted(tags, key=lambda t: -t[1]):
             if m not in weight:
-                spare += 1                                   # untagged floater / cover
-            elif weight[m] >= 1.0 and w >= 1.0:
-                spare += 1                                   # 2nd full-time person on one machine
+                spare += w                                   # untagged floater / cover
             else:
-                weight[m] = min(1.0, weight[m] + w)
+                room = 1.0 - weight[m]
+                weight[m] += min(w, room)
+                if w >= 1.0:
+                    spare += w - min(w, room)                # a whole person on a manned machine moves on
         fill_order = [m for m in machines if m != special] + [special]
         for m in fill_order:
-            if spare <= 0:
+            if spare <= 1e-9:
                 break
-            if weight[m] < 1.0:
-                weight[m] = 1.0
-                spare -= 1
+            take = min(spare, 1.0 - weight[m])
+            weight[m] += take
+            spare -= take
         per_machine = 60.0 * cfg.CNC_UTILISATION
         c6 = per_machine * weight[special]
         main = per_machine * sum(w for m, w in weight.items() if m != special)
