@@ -41,7 +41,8 @@ it and shows the outcome, including a live animated factory-floor view.
 | Cefla Automated Gluing Line | 12.95 m²/op-hr | **REAL** | confirmed capacity 9,000 m²/month (was wrongly split into two stations "Edging" + "Glue" - merged) |
 | Press 1 / Press 2 | 5.37 m²/op-hr each | **REAL** | 90th-pct daily "Thermoform Press" scan total (can't tell the two machines apart in the data) |
 | Despatch/Packing | 9.12 m²/op-hr | **REAL** | average of the real "Packing" and "Despatch" checkpoints |
-| Remake rate / lead-time penalty | 7.03% / +0.32 working days | **REAL** | live lead-time dashboard. The 0.32 is the *total* extra time a remake takes; the engine's `remake_days` is the hold before re-entry, and the results tab reports the simulated penalty next to the real one |
+| Remake rate | 5.0% of packed m² | **REAL** | 2026 monthly waste report: 2,079 m² remade of 42,010 m² output Jan-Jun (4.95%); 315 m²/month average Jan-Aug. (The lead-time dashboard's 7.03% is a *parts* ratio - remade parts are small, so the m² rate is lower; the engine works in m².) |
+| Remake lead-time penalty | +0.32 working days | **REAL** | live lead-time dashboard. The 0.32 is the *total* extra time a remake takes; the engine's `remake_days` is the hold before re-entry, and the results tab reports the simulated penalty next to the real one |
 | Thermo avg lead time | 8.66 working days | **REAL** | live lead-time dashboard (8.64 non-remake / 8.97 remake) - used by the reality-check panel |
 | Product mix (Thermo / Cut & Clash) | 80.6% / 19.4% | **REAL** | product_2026.xlsx. S1/S2/S3 split within Thermo still ASSUMPTION |
 | Staff roster (who, where, which shift) | 44 people | **REAL** | shop-floor sheet, Sep 2026 (see session 4); Press 1/2 split and cross-skills still ASSUMPTION |
@@ -295,6 +296,17 @@ full rate; the second runs at `CNC_SECOND_MACHINE_FACTOR` = 0.8
 [ASSUMPTION - close to 1 for long Series 3 cuts, lower for quick Series 1
 boards]. A real operator on that machine caps it at full rate. Nobody on
 the current roster is set up this way yet - it's there for what-ifs.
+
+## Session 4g - real remake / waste series
+
+Monthly 2026 remake report added (`REAL_REMAKE_WASTE_2026`): remake count,
+m² scrapped, m² per remake. Remakes are ~5% of output by m² (4.95% of all
+m² Jan-Jun; 5.8% of Thermo m²), 315 m²/month on average Jan-Aug. The
+engine remakes a share of packed m², so the default rate moved from the
+parts-based 7.03% to **5.0%** - it was producing ~510 m²/month of rework
+against a real ~315. The reality-check panel now compares the month's
+remade m² with the real 163-468 range. Seasonality (Feb-May high, ~1,000+
+remakes/month; Jan and Jun-Aug ~600) isn't modelled - the rate is flat.
 
 ## Open questions (need your input, not guessable from data)
 

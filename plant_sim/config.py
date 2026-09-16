@@ -674,10 +674,38 @@ SPLIT_STATION_SHARE = 0.5
 # work routed to C6). No data yet - replace with the real share when known.
 DEFAULT_SPECIAL_ORDER_PCT = 10.0
 
-# Remake loop. [REAL] Both figures now come from the live lead-time dashboard
-# (Thermo, YTD through 11 Sep 2026): 4,015 of 57,110 complete parts were
-# remakes (7.03%), and remakes take only 0.32 days longer on average than
+# Remake loop.
+#
+# [REAL] Monthly remake / waste report, 2026 (Sep is a part month):
+# remake count, m2 scrapped, and m2 per remake. This is the m2-based
+# series the engine's remake RATE is calibrated to - the engine remakes a
+# share of packed m2, so it has to match m2, not part counts.
+REAL_REMAKE_WASTE_2026 = {
+    #  month     remakes  waste m2  m2/remake
+    "2026-01": (465,  162.82, 0.350),
+    "2026-02": (1058, 385.76, 0.365),
+    "2026-03": (1274, 468.22, 0.368),
+    "2026-04": (936,  374.47, 0.400),
+    "2026-05": (1122, 425.95, 0.380),
+    "2026-06": (672,  261.47, 0.389),
+    "2026-07": (606,  218.47, 0.361),
+    "2026-08": (586,  225.71, 0.385),
+    "2026-09": (309,  135.18, 0.437),   # part month
+}
+# Full months Jan-Aug: 315 m2/month remade on average (163-468). Against
+# the same months' total output in the production tracker (Jan-Jun, the
+# overlap): 2,079 m2 remade of 42,010 m2 = 4.95% of all m2, 5.8% of Thermo
+# m2. That is the rate below. m2 per remake (0.35-0.44) matches the
+# average Thermo part (0.38 m2) - remakes are single parts, as modelled.
+REAL_REMAKE_M2_PER_MONTH = {"mean": 315.0, "min": 163.0, "max": 468.0}
+
+# The live lead-time dashboard (Thermo, YTD to 11 Sep 2026) gives a
+# PARTS-based rate: 4,015 of 57,110 complete parts were remakes (7.03%).
+# It's higher than the m2 rate because the parts remade are mostly small
+# ones - keep it for reference, but the engine works in m2. The same
+# dashboard says remakes take only 0.32 days longer on average than
 # non-remakes (8.97 vs 8.64 working days).
+REAL_REMAKE_PARTS_RATE_PCT = 7.03
 #
 # That small penalty tells you something about HOW remakes flow: a part that
 # went back to the start of the line and waited its turn again would take a
@@ -688,7 +716,7 @@ DEFAULT_SPECIAL_ORDER_PCT = 10.0
 # is the hold before it re-enters (inspection / decision / re-programming);
 # the UI reports the simulated remake penalty next to the real 0.32 so you
 # can see whether this default reproduces it.
-DEFAULT_REMAKE_RATE_PCT = 7.0
+DEFAULT_REMAKE_RATE_PCT = 5.0   # [REAL, m2-based] see REAL_REMAKE_WASTE_2026 above
 DEFAULT_REMAKE_DAYS = 0.32
 
 

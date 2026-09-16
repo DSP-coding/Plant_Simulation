@@ -501,6 +501,11 @@ with tab_results:
                  f"{thermo.overall_avg_lead_days:.1f}" if thermo.has_completions else "—",
                  f"{cfg.REAL_AVG_LEAD_DAYS[cfg.Route.THERMO]:.2f} (live lead-time dashboard)",
                  thermo.has_completions and abs(thermo.overall_avg_lead_days - cfg.REAL_AVG_LEAD_DAYS[cfg.Route.THERMO]) <= 1.5),
+                ("Remade m² in the month",
+                 f"{result.cum_remade_m2:,.0f}",
+                 f"{cfg.REAL_REMAKE_M2_PER_MONTH['mean']:.0f} average "
+                 f"({cfg.REAL_REMAKE_M2_PER_MONTH['min']:.0f}-{cfg.REAL_REMAKE_M2_PER_MONTH['max']:.0f}, 2026 waste report)",
+                 cfg.REAL_REMAKE_M2_PER_MONTH["min"] <= result.cum_remade_m2 <= cfg.REAL_REMAKE_M2_PER_MONTH["max"]),
                 ("Thermo remake lead-time penalty (working days)",
                  f"{thermo.remake_lead_penalty_days:+.2f}" if thermo.remake_lead_penalty_days is not None else "—",
                  f"+{cfg.REAL_REMAKE_LEAD_PENALTY_DAYS:.2f} (live lead-time dashboard)",
