@@ -497,14 +497,14 @@ with tab_results:
         label("Charts", teal=True)
         st.subheader("Station utilisation (output / capacity while running)")
         util_df = pd.DataFrame({
-            "Station": [station_label(s) for s in result.station_utilisation if s != "admin"],
-            "Utilisation %": [v * 100 for s, v in result.station_utilisation.items() if s != "admin"],
+            "Station": [station_label(s) for s in result.station_utilisation if cfg.is_flow_station(s)],
+            "Utilisation %": [v * 100 for s, v in result.station_utilisation.items() if cfg.is_flow_station(s)],
         }).set_index("Station")
         st.bar_chart(util_df)
 
         st.subheader("Buffer / queue levels over time (m²)")
         buf_df = pd.DataFrame([
-            {"hour": t["h"], **{station_label(k): v for k, v in t["buf"].items() if k != "admin"}}
+            {"hour": t["h"], **{station_label(k): v for k, v in t["buf"].items() if cfg.is_flow_station(k)}}
             for t in result.trace
         ]).set_index("hour")
         st.line_chart(buf_df)

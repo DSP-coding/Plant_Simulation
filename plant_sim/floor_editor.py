@@ -34,6 +34,9 @@ FLOOR_ROWS = [
     {"label": "Cut & Clash (1536)", "stations": list(cfg.ROUTE_SEQUENCE[cfg.Route.CUT_AND_CLASH])},
     {"label": "Thermo (Series 1/2/3)",
      "stations": list(cfg.ROUTE_SEQUENCE[cfg.Route.THERMO]) + list(cfg.PRESS_STATIONS)},
+    # Box-packed product lines that sit under Dispatch on the org sheet but
+    # have their own assigned packers (not part of the m2 flow).
+    {"label": "Box packing (under Despatch)", "stations": ["hafele", "diy"]},
 ]
 FLOOR_SHARED = [cfg.SHARED_TERMINAL_STATION, "admin"]
 

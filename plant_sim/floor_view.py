@@ -35,6 +35,9 @@ STATION_ICONS = {
     "press_1": "🗜️",
     "press_2": "🗜️",
     "despatch": "📦",
+    "hafele": "🗃️",
+    "diy": "🧰",
+    "admin": "🗂️",
 }
 
 _TEMPLATE = r"""

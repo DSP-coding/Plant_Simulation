@@ -1,41 +1,45 @@
 id,name,home_station,shift,skills,absence_rate_pct,notes
-393,Silivelia Afoa,admin,aft,,3.8,From staff sheet snapshot (Area: Admin)
-104,Mandeep Kler,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-124,Jerard Mendoza,cnc_1536,aft,eb_drilling,3.8,Confirmed: afternoon CNC 1536 (Cut & Clash) plus afternoon Edge Banding
-201,Nirmal Singh,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-395,Jay (Marvin) Baluenit,cnc_thermo,day,cnc_1536;eb_drilling,3.8,Example multi-skilled operator per your note: can run all CNCs + edge banding
-396,Prabh Singh,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-410,Toupou Lolo,cnc_thermo,aft,,3.8,From staff sheet snapshot (Area: CNC) - confirmed afternoon shift
-411,Romal Baldevind,cnc_thermo,aft,,3.8,From staff sheet snapshot (Area: CNC) - confirmed afternoon shift
-434,Raymond Baniaga,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-510,Richard Rico Luis,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-533,Jeremy Mendoza,cnc_thermo,day,,3.8,From staff sheet snapshot (Area: CNC)
-63,Saimone Maile,despatch,day,,3.8,From staff sheet snapshot (Area: Despatch)
-110,Maria Afoa,despatch,day,,3.8,From staff sheet snapshot (Area: Despatch)
-117,Agnes Prasad,despatch,day,,3.8,From staff sheet snapshot (Area: Despatch)
-133,Ahkuino Smalley,despatch,aft,,3.8,From staff sheet snapshot (Area: Despatch)
-403,Taupo Sefo,despatch,aft,,3.8,From staff sheet snapshot (Area: Despatch)
-412,Peniamina (Ben) Tasele,despatch,day,,3.8,From staff sheet snapshot (Area: Despatch)
-426,Dayna Subritzky,despatch,day,,3.8,From staff sheet snapshot (Area: Despatch)
-559,Arona Akeimo,despatch,aft,,3.8,From staff sheet snapshot (Area: Despatch)
-130,Eric Mabin,eb_drilling,day,,3.8,From staff sheet snapshot (Area: E/B-Drilling)
-384,Faiyaz Ali,eb_drilling,day,,3.8,From staff sheet snapshot (Area: E/B-Drilling)
-405,Lloyd Tadlip,eb_drilling,day,,3.8,From staff sheet snapshot (Area: E/B-Drilling)
-233,Stuart Lyon,edging,aft,,3.8,"Confirmed: Edging and Glue are the same real station (Cefla automated gluing line) - was listed under ""Edging"" on the staff sheet"
-114,Misiluni Malolua,edging,day,,3.8,"Confirmed: Edging and Glue are the same real station (Cefla automated gluing line) - was listed under ""Glue"" on the staff sheet"
-531,Viavia Sese,edging,day,,3.8,"Confirmed: Edging and Glue are the same real station (Cefla automated gluing line) - was listed under ""Glue"" on the staff sheet"
-203,Diana Savage,optimising,day,,3.8,From staff sheet snapshot (Area: Optimising)
-62,Vili Fonua,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-118,Rodney Viloria,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-135,Glenn Dominguez,press_1,aft,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-200,Stuart Taueetia,press_1,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-376,Alfonso Mendoza,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-379,Carlito Padiclas,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-413,Silao Tufuga,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-554,Pili Poka Sanele,press_2,day,,3.8,"Area sheet just said ""Press"" - split evenly between Press 1/2 as a placeholder, reassign once you know who's actually on which press"
-76,Bang Le,mb_sander,day,sanding,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
-373,Bao Sok Keo,mb_sander,aft,sanding,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Aft crew of 2 split 1/1 as home station (MB Sander/Sanding), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
-389,Tan Viet Nguyen,sanding,aft,mb_sander,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Aft crew of 2 split 1/1 as home station (MB Sander/Sanding), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
-398,Jett Atiwag,mb_sander,day,sanding,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
-423,Quyen Nguyen,sanding,day,mb_sander,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
-530,Hai Hoang,sanding,day,mb_sander,3.8,"[ASSUMPTION] Confirmed: sanding team also runs the MB sander. Day crew of 4 split 2/2 as home station (MB Sander/Sanding, matching each station's ideal_ops=2), cross-skilled so allocation can flex either way - reassign if the real day-to-day split differs"
+393,Silivelia Afoa,admin,aft,,3.8,Admin (not on the shop-floor sheet; kept from the earlier staff sheet)
+201,Nirmal Singh,cnc_1536,day,,3.8,Shop-floor sheet Sep 2026: CNC 1536 day
+124,Jerard Mendoza,cnc_1536,aft,eb_drilling,3.8,Shop-floor sheet Sep 2026: CNC 1536 afternoon; Edge bander cover (afternoon)
+395,Jay (Marvin) Baluenit,cnc_thermo,day,cnc_1536;eb_drilling,3.8,Shop-floor sheet Sep 2026: CNC 1224 day. Multi-skilled: can run all CNCs + edge banding
+510,Richard Rico Luis,cnc_thermo,aft,,3.8,Shop-floor sheet Sep 2026: CNC 1224 afternoon
+434,Raymond Baniaga,cnc_thermo,day,,3.8,Shop-floor sheet Sep 2026: CNC C6 day
+411,Romal Baldevind,cnc_thermo,aft,,3.8,Shop-floor sheet Sep 2026: CNC C6 afternoon
+104,Mandeep Kler,cnc_thermo,day,,3.8,Shop-floor sheet Sep 2026: Weeke 100 (old) day
+410,Toupou Lolo,cnc_thermo,aft,,3.8,Shop-floor sheet Sep 2026: Weeke 100 (old) afternoon
+76,Bang Le,press_2,day,cnc_thermo,3.8,Shop-floor sheet Sep 2026: Press day; covers Weeke 480 (new) day. Press 1/2 split is a placeholder
+533,Jeremy Mendoza,press_2,aft,cnc_thermo,3.8,Shop-floor sheet Sep 2026: Press afternoon; covers Weeke 480 (new) afternoon. Press 1/2 split is a placeholder
+384,Faiyaz Ali,eb_drilling,day,,3.8,Shop-floor sheet Sep 2026: Edge bander day
+130,Eric Mabin,eb_drilling,day,,3.8,Shop-floor sheet Sep 2026: Drill day (sheet shows no afternoon drill operator)
+530,Hai Hoang,sanding,day,mb_sander,3.8,Shop-floor sheet Sep 2026: manual sander day; cross-skilled on MB sander [ASSUMPTION]
+423,Quyen Nguyen,mb_sander,day,sanding,3.8,Shop-floor sheet Sep 2026: MB sander day (the only day MB operator); cross-skilled on manual sanding [ASSUMPTION]
+373,Bao Sok Keo,sanding,aft,mb_sander,3.8,Shop-floor sheet Sep 2026: manual sander afternoon; cross-skilled on MB sander [ASSUMPTION]
+398,Jett Atiwag,sanding,aft,mb_sander,3.8,Shop-floor sheet Sep 2026: manual sander afternoon; cross-skilled on MB sander [ASSUMPTION]
+389,Tan Viet Nguyen,mb_sander,aft,sanding,3.8,Shop-floor sheet Sep 2026: MB sander afternoon (the only afternoon MB operator); cross-skilled on manual sanding [ASSUMPTION]
+114,Misiluni Malolua,edging,day,,3.8,Shop-floor sheet Sep 2026: Glue/Cefla day
+9001,Vaa (temp),edging,day,,3.8,Shop-floor sheet Sep 2026: Glue/Cefla day - TEMP (highlighted on the sheet); id unknown
+133,Ahkuino Smalley,edging,aft,despatch,3.8,Shop-floor sheet Sep 2026: Glue/Cefla afternoon (was Despatch on the earlier sheet - kept as a skill)
+531,Viavia Sese,edging,aft,,3.8,Shop-floor sheet Sep 2026: Glue/Cefla afternoon
+118,Rodney Viloria,press_1,day,,3.8,Shop-floor sheet Sep 2026: Press day. Press 1/2 split is a placeholder
+379,Carlito Padiclas,press_1,day,,3.8,Shop-floor sheet Sep 2026: Press day. Press 1/2 split is a placeholder
+9002,Peter (temp),press_1,day,,3.8,Shop-floor sheet Sep 2026: Press day - TEMP (highlighted on the sheet); id unknown
+376,Alfonso Mendoza,press_2,day,,3.8,Shop-floor sheet Sep 2026: Press day. Press 1/2 split is a placeholder
+200,Stuart Taueetia,press_2,day,,3.8,Shop-floor sheet Sep 2026: Press day (rotation). Sheet just says 'Stuart' - assumed Taueetia (was Press) not Stuart Lyon (was Cefla)
+135,Glenn Dominguez,press_1,aft,,3.8,Shop-floor sheet Sep 2026: Press afternoon. Press 1/2 split is a placeholder
+554,Pili Poka Sanele,press_1,aft,,3.8,Shop-floor sheet Sep 2026: Press afternoon. Press 1/2 split is a placeholder
+9003,Zach (temp),press_1,aft,,3.8,Shop-floor sheet Sep 2026: Press afternoon - TEMP (highlighted on the sheet); id unknown
+413,Silao Tufuga,press_2,aft,,3.8,Shop-floor sheet Sep 2026: Press afternoon (rotation). Press 1/2 split is a placeholder
+63,Saimone Maile,despatch,day,,3.8,Shop-floor sheet Sep 2026: Dispatch day
+9004,Vili Alofi,despatch,day,,3.8,Shop-floor sheet Sep 2026: Dispatch day; id unknown
+110,Maria Afoa,despatch,day,,3.8,Shop-floor sheet Sep 2026: Dispatch day
+396,Prabh Singh,despatch,day,cnc_thermo,3.8,Shop-floor sheet Sep 2026: Dispatch day (was CNC on the earlier sheet - kept as a skill)
+403,Taupo Sefo,despatch,aft,,3.8,Shop-floor sheet Sep 2026: Dispatch afternoon
+62,Vili Fonua,despatch,aft,press_1;press_2,3.8,Shop-floor sheet Sep 2026: Dispatch afternoon (was Press on the earlier sheet - kept as a skill)
+9005,Anish (temp),despatch,aft,,3.8,Shop-floor sheet Sep 2026: Dispatch afternoon - TEMP (highlighted on the sheet); id unknown
+412,Peniamina (Ben) Tasele,hafele,day,despatch,3.8,Shop-floor sheet Sep 2026: Hafele box packing day (under Dispatch - can help general packing)
+117,Agnes Prasad,hafele,day,despatch,3.8,Shop-floor sheet Sep 2026: Hafele box packing day (under Dispatch - can help general packing)
+426,Dayna Subritzky,diy,day,despatch,3.8,Shop-floor sheet Sep 2026: DIY box packing day (under Dispatch - can help general packing)
+559,Arona Akeimo,diy,aft,despatch,3.8,Shop-floor sheet Sep 2026: DIY box packing afternoon (under Dispatch - can help general packing)
+203,Diana Savage,optimising,day,,3.8,Shop-floor sheet Sep 2026: Optimising day
+9006,Ricky,optimising,day,,3.8,Shop-floor sheet Sep 2026: Optimising day; surname and id unknown

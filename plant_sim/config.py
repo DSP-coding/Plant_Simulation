@@ -163,12 +163,14 @@ STATIONS: dict[str, Station] = {
                            ideal_ops=1, capacity_m2_per_op_hour=0.0, num_machines=1),
     "eb_drilling": Station("eb_drilling", "Edge Band / Drilling", Route.CUT_AND_CLASH,
                             ideal_ops=2, capacity_m2_per_op_hour=6.5),
-    # ideal_ops == num_machines on purpose: "ideal staffing" for a bank of
-    # CNCs means one operator per machine, so the "capacity at ideal
-    # staffing" number shown in the UI is the 5-machine figure. Extra people
-    # beyond the machine count add nothing (see Station.max_useful_ops).
+    # [REAL, shop-floor sheet Sep 2026] four Thermo CNCs - 1224, C6, Weeke 100
+    # (old), Weeke 480 (new) - each with one operator per shift (the Weeke
+    # 480 is covered by a Press operator on both shifts). ideal_ops ==
+    # num_machines on purpose: "ideal staffing" for a bank of CNCs means one
+    # operator per machine. Extra people beyond the machine count add
+    # nothing (see Station.max_useful_ops).
     "cnc_thermo": Station("cnc_thermo", "CNC (Thermo)", Route.THERMO,
-                           ideal_ops=5, capacity_m2_per_op_hour=0.0, num_machines=5),
+                           ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=4),
     # [REAL-derived lower bound] Manual sanding has no machine limit (several
     # people can sand profiles in parallel), and per the user it is NOT the
     # real constraint - everything gets fed through the single MB Sander
@@ -191,10 +193,14 @@ STATIONS: dict[str, Station] = {
     # checkpoint's real ceiling (90th-percentile daily total, extrapolated to
     # a month = ~8,007 m2/month) belongs to the MB Sander specifically, not
     # to manual sanding. Rate = 8007 / (ideal_ops=2 * REFERENCE_HOURS_PER_MONTH).
-    # machine_bound: one machine, infeed + outfeed - a third person can't make
-    # it run faster. See MB_SANDER_SINGLE_OP_FACTOR for the one-person case.
+    # [REAL, shop-floor sheet Sep 2026] the MB Sander is run by ONE person per
+    # shift (Quyen days, Viet afternoons) - the earlier 2-person infeed/
+    # outfeed model was an old-tool assumption. The real ~8,007 m2/month
+    # ceiling therefore belongs to a single operator: rate = 8007 /
+    # (ideal_ops=1 * REFERENCE_HOURS_PER_MONTH). machine_bound: a second
+    # person can't make the one machine run faster.
     "mb_sander":  Station("mb_sander", "MB Sander", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=11.517548906789415, num_machines=1,
+                           ideal_ops=1, capacity_m2_per_op_hour=23.03509781357883, num_machines=1,
                            machine_bound=True),
     # [REAL] "Edging" and "Glue" were originally modelled as two separate
     # stations, but there is only one real physical station here: the Cefla
@@ -231,6 +237,14 @@ STATIONS: dict[str, Station] = {
     # (1,390/month, 8 people). Close to the old 8.7 guess.
     "despatch":   Station("despatch", "Packing / Despatch", None,
                            ideal_ops=3, capacity_m2_per_op_hour=9.124),
+    # [REAL, shop-floor sheet Sep 2026] Hafele and DIY sit under Dispatch on
+    # the org sheet, but they are box-packed product lines with their OWN
+    # assigned packers. They are NOT part of the Thermo / Cut & Clash m2 flow
+    # (nothing in this model feeds them), so their people don't count toward
+    # general packing capacity - but they carry "despatch" as a skill in the
+    # roster, so the allocator can pull them across when packing is drowning.
+    "hafele":     Station("hafele", "Hafele box packing", None, ideal_ops=2, capacity_m2_per_op_hour=0.0),
+    "diy":        Station("diy", "DIY box packing", None, ideal_ops=1, capacity_m2_per_op_hour=0.0),
     "admin":      Station("admin", "Admin", None, ideal_ops=1, capacity_m2_per_op_hour=1e9),
 }
 
@@ -240,10 +254,6 @@ STATIONS: dict[str, Station] = {
 CNC_SETUP_MIN_PER_BOARD = 3.0
 CNC_UTILISATION = 0.80   # [ASSUMPTION] machine uptime while manned
 
-# [ASSUMPTION, from original tool] one operator CAN run the MB Sander alone
-# (loading and unloading themselves) but only at this fraction of the normal
-# two-person infeed+outfeed rate.
-MB_SANDER_SINGLE_OP_FACTOR = 0.45
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +370,15 @@ PROCESSING_ORDER: list[str] = (
     + list(reversed(ROUTE_SEQUENCE[Route.CUT_AND_CLASH]))
 )
 
+# Stations that m2 actually flows through. Everything else (admin, the
+# Hafele/DIY box-packing lines) is staffed and shown on the floor but has no
+# queue to work, no capacity number to edit and no utilisation to report.
+FLOW_STATIONS: tuple[str, ...] = tuple(PROCESSING_ORDER)
+
+
+def is_flow_station(station_id: str) -> bool:
+    return station_id in FLOW_STATIONS
+
 
 # ---------------------------------------------------------------------------
 # Shift crews: groups of stations that share one shift schedule (days/week,
@@ -422,6 +441,8 @@ STATION_CREW: dict[str, str] = {
     "press_1": "finishing",
     "press_2": "finishing",
     "despatch": "finishing",
+    "hafele": "finishing",
+    "diy": "finishing",
     "optimising": "cutclash",
     "cnc_1536": "cutclash",
     "eb_drilling": "cutclash",

@@ -99,7 +99,8 @@ class ConfigTests(unittest.TestCase):
     def test_max_useful_ops(self):
         self.assertEqual(cfg.STATIONS["cnc_1536"].max_useful_ops, 1)
         self.assertEqual(cfg.STATIONS["cnc_thermo"].max_useful_ops, cfg.STATIONS["cnc_thermo"].num_machines)
-        self.assertEqual(cfg.STATIONS["mb_sander"].max_useful_ops, 2)
+        self.assertEqual(cfg.STATIONS["mb_sander"].max_useful_ops, 1)   # one-person machine (shop-floor sheet)
+        self.assertIsNone(cfg.STATIONS["hafele"].max_useful_ops)
         self.assertIsNone(cfg.STATIONS["sanding"].max_useful_ops)
 
     def test_default_capacity_roundtrip(self):
@@ -367,12 +368,14 @@ class EngineTests(unittest.TestCase):
 
     def test_machine_bound_capacity_caps_at_ideal_ops(self):
         rate = 10.0
-        mb = cfg.STATIONS["mb_sander"]
+        mb = cfg.STATIONS["mb_sander"]          # ideal_ops=1, machine_bound
         f = Simulator._flat_capacity_m2_per_hour
         self.assertEqual(f(mb, 0, rate), 0.0)
-        self.assertAlmostEqual(f(mb, 1, rate), 2 * rate * cfg.MB_SANDER_SINGLE_OP_FACTOR)
-        self.assertAlmostEqual(f(mb, 2, rate), 2 * rate)
-        self.assertAlmostEqual(f(mb, 5, rate), 2 * rate)
+        self.assertAlmostEqual(f(mb, 1, rate), rate)
+        self.assertAlmostEqual(f(mb, 5, rate), rate)   # a second person can't speed the machine up
+        cefla = cfg.STATIONS["edging"]           # ideal_ops=2, machine_bound
+        self.assertAlmostEqual(f(cefla, 1, rate), rate)
+        self.assertAlmostEqual(f(cefla, 3, rate), 2 * rate)
         sanding = cfg.STATIONS["sanding"]
         self.assertAlmostEqual(f(sanding, 5, rate), 5 * rate)   # manual: more hands, more output
 
@@ -458,6 +461,41 @@ class FloorEditorTests(unittest.TestCase):
         restore(r, before)
         op = r.get("j")
         self.assertEqual((op.home_station, op.shift, op.skills), ("cnc_thermo", "day", {"cnc_1536"}))
+
+    def test_box_packing_lines_are_staffed_but_outside_the_flow(self):
+        for sid in ("hafele", "diy", "admin"):
+            self.assertFalse(cfg.is_flow_station(sid))
+            self.assertNotIn(sid, SimulationSettings().station_capacity_m2_per_month)
+        for sid in ("despatch", "cnc_1536", "press_2"):
+            self.assertTrue(cfg.is_flow_station(sid))
+        roster = Roster([Operator("b", "Ben", "hafele", shift="day", skills={"despatch"})])
+        r = Simulator(roster, settings(horizon="day")).run()
+        self.assertEqual(r.trace[0]["ops"]["hafele"], 1)
+        self.assertEqual(r.station_utilisation["hafele"], 0.0)
+        self.assertEqual(r.trace[0]["buf"].get("hafele", 0.0), 0.0)
+
+    def test_box_packers_float_to_despatch_when_it_is_drowning(self):
+        ops = [Operator("b", "Ben", "hafele", skills={"despatch"}), Operator("a", "Agnes", "hafele", skills={"despatch"}),
+               Operator("s", "Saimone", "despatch")]
+        a = allocate_shift(ops, {"hafele", "despatch"}, {"hafele": 0.0, "despatch": 3000.0})
+        self.assertEqual(sum(1 for v in a.values() if v == "despatch"), 2)
+        self.assertEqual(sum(1 for v in a.values() if v == "hafele"), 1)   # never stripped to zero
+
+    def test_real_roster_matches_the_shop_floor_sheet(self):
+        r = real_roster()
+        by = {(o.home_station, o.shift): [] for o in r.operators}
+        for o in r.operators:
+            by[(o.home_station, o.shift)].append(o.name)
+        self.assertEqual(len(by[("cnc_1536", "day")]), 1)          # Nirmal
+        self.assertEqual(len(by[("cnc_1536", "aft")]), 1)          # Jerald
+        self.assertEqual(len(by[("mb_sander", "day")]), 1)         # Quyen
+        self.assertEqual(len(by[("mb_sander", "aft")]), 1)         # Viet
+        self.assertEqual(len(by[("hafele", "day")]), 2)            # Ben, Agnes
+        self.assertEqual(len(by[("diy", "day")]) + len(by[("diy", "aft")]), 2)   # Dayna, Arona
+        # 3 home CNC operators per shift + a Press cover each = the 4 machines
+        cnc_day = len(by[("cnc_thermo", "day")]) + sum(1 for o in r.operators
+                                                        if o.shift == "day" and "cnc_thermo" in o.skills and o.home_station.startswith("press"))
+        self.assertEqual(cnc_day, cfg.STATIONS["cnc_thermo"].num_machines)
 
     def test_result_records_who_was_where(self):
         roster = Roster([Operator("d", "Day Op", "cnc_1536", shift="day"),

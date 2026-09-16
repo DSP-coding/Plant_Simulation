@@ -33,17 +33,18 @@ it and shows the outcome, including a live animated factory-floor view.
 | Station | Rate | Status | Source |
 |---|---|---|---|
 | Optimising | 57.16 m²/op-hr | **REAL** | 90th-pct daily "Optimisation" scan total ÷ real op-hours (3-month export) |
-| CNC (Thermo) | cut-time model, 5 machines | ASSUMPTION | S1/S2/S3 min-per-board guesses carried from the old tool |
+| CNC (Thermo) | cut-time model, **4 machines** (1224, C6, Weeke 100, Weeke 480) | machine count **REAL** (shop-floor sheet); cut times ASSUMPTION | S1/S2/S3 min-per-board guesses carried from the old tool |
 | CNC 1536 (Cut & Clash) | cut-time model, 1 machine | ASSUMPTION | same as above |
 | Edge Band/Drilling | 6.5 m²/op-hr | ASSUMPTION | no matching real WorkArea checkpoint in the export |
 | Manual Sanding | 11.52 m²/op-hr | **REAL-derived lower bound** | the combined "Sanding" checkpoint proves ≥8,007 m²/month passes through manual sanding *and* the MB Sander, so manual sanding can do at least that at its 2-person crew (the old 6.5 capped it at ~4,500 m²/month and made it the plant's worst bottleneck - see session 3) |
-| MB Sander | 11.52 m²/op-hr | **REAL** | everything sanded is fed through this one machine - real ceiling ÷ ideal_ops=2 on reference hours |
+| MB Sander | 23.04 m²/op-hr, **one operator** | **REAL** | everything sanded is fed through this one machine, run by one person per shift (shop-floor sheet) - real ~8,007 m²/month ceiling ÷ ideal_ops=1 on reference hours |
 | Cefla Automated Gluing Line | 12.95 m²/op-hr | **REAL** | confirmed capacity 9,000 m²/month (was wrongly split into two stations "Edging" + "Glue" - merged) |
 | Press 1 / Press 2 | 5.37 m²/op-hr each | **REAL** | 90th-pct daily "Thermoform Press" scan total (can't tell the two machines apart in the data) |
 | Despatch/Packing | 9.12 m²/op-hr | **REAL** | average of the real "Packing" and "Despatch" checkpoints |
 | Remake rate / lead-time penalty | 7.03% / +0.32 working days | **REAL** | live lead-time dashboard. The 0.32 is the *total* extra time a remake takes; the engine's `remake_days` is the hold before re-entry, and the results tab reports the simulated penalty next to the real one |
 | Thermo avg lead time | 8.66 working days | **REAL** | live lead-time dashboard (8.64 non-remake / 8.97 remake) - used by the reality-check panel |
 | Product mix (Thermo / Cut & Clash) | 80.6% / 19.4% | **REAL** | product_2026.xlsx. S1/S2/S3 split within Thermo still ASSUMPTION |
+| Staff roster (who, where, which shift) | 44 people | **REAL** | shop-floor sheet, Sep 2026 (see session 4); Press 1/2 split and cross-skills still ASSUMPTION |
 | Intake timing | weekdays, first 8 h of day shift | ASSUMPTION | office hours; was spread over all 168 h/week before session 3 |
 | Target lead time - Thermo | 10 working days | **REAL** | confirmed, excludes weekends |
 | Target lead time - Cut & Clash | 7 calendar days | UNCONFIRMED | assumed calendar days pending confirmation |
@@ -191,6 +192,44 @@ none of them is a tuning knob.
 | Cut & Clash DIFOT | 0% | 43% |
 | Top utilisation | Sanding 99%, CNC 1536 99% | CNC 1536 100%, MB Sander 98%, Press 1 98% |
 
+## Session 4 - the real shop-floor sheet (17 Sep 2026)
+
+The roster was rebuilt from the actual shop-floor sheet (day / afternoon
+by machine). What it told us, and what changed:
+
+1. **Thermo CNC is 4 machines, not 5** - 1224, C6, Weeke 100 (old), Weeke
+   480 (new) - one operator each per shift. The Weeke 480 is *covered* by a
+   Press operator on both shifts (Bang days, Jeremy afternoons), so those
+   two are rostered to Press with `cnc_thermo` as a skill.
+   `num_machines` 5 → 4 (default CNC capacity 9,233 → 7,392 m²/month).
+2. **CNC 1536 does have a day operator (Nirmal)** - closes the old open
+   question #2. Jerald stays on afternoons and also covers the edge bander.
+3. **The MB Sander is run by ONE person per shift** (Quyen days, Viet
+   afternoons). The 2-person infeed/outfeed model and its "45% with one
+   operator" rule were old-tool assumptions - removed. The real ~8,007
+   m²/month ceiling now belongs to a single operator (`ideal_ops=1`,
+   23.04 m²/op-hr); a second person can't make the machine faster.
+4. **Manual sanding** is 1 person days (Hai), 2 afternoons (Bao, Jett).
+5. **Edge bander (Ali) and Drill (Eric)** are both days only - no afternoon
+   drill operator on the sheet. Still modelled as one station.
+6. **Hafele and DIY** sit under Dispatch on the sheet but are box-packed
+   lines with their own assigned packers (Ben, Agnes / Dayna, Arona).
+   Modelled as two non-flow stations under the finishing crew: staffed and
+   shown on the floor, but they don't count toward Thermo / Cut & Clash
+   packing capacity. Their people carry `despatch` as a skill so the
+   allocator can pull them across when packing is drowning.
+7. Moves vs the earlier sheet: Ahkuino → Cefla aft, Viavia → Cefla aft,
+   Vili Fonua → Despatch aft, Prabh → Despatch day, Bang/Jett/Bao
+   re-sorted between manual sanding and MB. Four temps added (Vaa, Peter,
+   Zach, Anish), two new names (Ricky, Vili Alofi), two people no longer on
+   the sheet removed (Lloyd Tadlip, Stuart Lyon - "Stuart (rotation)" on
+   Press is assumed to be Stuart Taueetia).
+
+**Net effect (month, 7,300 m², no sick leave):** completion 97% → 99%,
+DIFOT 88% → 100%, Cut & Clash lead 7.1 → 3.5 days (CNC 1536 100% → 72%),
+Thermo lead 4.7 → 4.4 working days. The tightest stations are now the
+four Thermo CNCs (99%) and manual sanding (97%).
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -203,11 +242,14 @@ none of them is a tuning knob.
    order-processing / scheduling / delivery, raise those; if it's floor
    congestion, the station rates are too generous. Real order-level data
    (order date, release-to-floor date, despatch date) would settle which.
-0b. **Cut & Clash DIFOT is 43% at the real 19.4% share** because CNC 1536
-   sits at 100% with one afternoon operator - same as open question 2
-   below, now with the correct share of intake. Either the day-shift
-   staffing exists and isn't in the roster, or the 20 min/board cut time
-   (an old-tool placeholder) is too slow.
+0b. ~~Cut & Clash DIFOT is 43%~~ **Resolved (session 4)** by the real
+   roster: with Nirmal on 1536 days, Cut & Clash runs at 100% DIFOT and
+   3.5-day lead time.
+0d. **Press 1 vs Press 2**: the sheet just says "Press"; the 6 day / 5
+   afternoon people are split between the two machines as a placeholder.
+   Also, is the MB Sander genuinely a one-person job (as rostered), or is
+   the second person simply missing from the sheet? The rate now assumes
+   one person delivers the full ~8,007 m²/month.
 0c. **The two real intake sources disagree on the route split**: the
    13-month tracker gives Cut & Clash ~13% of m² (984 of 7,409/month);
    product_2026.xlsx gives 19.4%. The mix uses 19.4%; the monthly intake
@@ -218,9 +260,8 @@ none of them is a tuning knob.
    real Optimising volume (~9,900 m²/month) is nearly as large as total
    combined intake, not just Cut & Clash's ~19% share. If Thermo also
    passes through it, `ROUTE_SEQUENCE` in `config.py` needs a change.
-2. **CNC 1536 has zero confirmed day-shift staff** (only Jerard Mendoza,
-   aft) and is the current top bottleneck at 99% utilised. Real day-shift
-   names, or is it genuinely aft-only?
+2. ~~CNC 1536 has zero confirmed day-shift staff~~ **Resolved (session 4)**:
+   Nirmal runs it on days, Jerald on afternoons.
 3. **Edge Band/Drilling's real rate** - no matching checkpoint existed in
    the 3-month export; still a guess (6.5 m²/op-hr).
 4. **Cut & Clash's target lead time** - confirmed as 7 days, but working

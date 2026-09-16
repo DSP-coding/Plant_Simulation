@@ -65,7 +65,7 @@ class SimulationSettings:
     # behaviour exactly. See config.default_station_capacity_m2_per_month().
     station_capacity_m2_per_month: dict[str, float] = field(
         default_factory=lambda: {sid: cfg.default_station_capacity_m2_per_month(sid)
-                                  for sid in cfg.STATIONS if sid != "admin"})
+                                  for sid in cfg.FLOW_STATIONS})
     warmup_days: int = cfg.SIMULATION_WARMUP_DAYS
     buffer_cap_m2: float = cfg.DEFAULT_BUFFER_CAP_M2
 
@@ -588,8 +588,8 @@ class Simulator:
         op_hour_rate: dict[str, float] = {}
         cnc_min_per_m2: dict[str, dict[str, float]] = {}
         for sid, station in cfg.STATIONS.items():
-            if sid == "admin":
-                continue
+            if not cfg.is_flow_station(sid):
+                continue   # admin / box-packing lines: staffed, but no m2 flows through
             target_month = s.station_capacity_m2_per_month.get(
                 sid, cfg.default_station_capacity_m2_per_month(sid))
             if sid in cfg.CNC_STATION_IDS:
@@ -612,9 +612,6 @@ class Simulator:
     def _flat_capacity_m2_per_hour(station: cfg.Station, ops: int, rate_m2_per_op_hour: float) -> float:
         if ops <= 0:
             return 0.0
-        if station.id == "mb_sander" and ops == 1:
-            # One person can run the MB Sander alone, but slowly.
-            return station.ideal_ops * rate_m2_per_op_hour * cfg.MB_SANDER_SINGLE_OP_FACTOR
         if station.machine_bound:
             ops = min(ops, station.ideal_ops)   # the machine can't go faster than full rate
         return ops * rate_m2_per_op_hour

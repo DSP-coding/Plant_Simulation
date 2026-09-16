@@ -23,11 +23,10 @@
   .lane.aft .dot { background:var(--aft); }
   .lane-title .hint { font-family:var(--body-font); letter-spacing:0; text-transform:none; color:var(--muted); font-size:11px; margin-left:auto; }
   .grid { display:grid; grid-template-columns:repeat(6, minmax(118px, 1fr)) minmax(118px, 1fr) minmax(96px, 0.8fr);
-          grid-template-rows:auto auto; gap:8px; }
+          grid-auto-rows:auto; gap:8px; }
   .row-label { grid-column:1 / -1; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
   .station { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:9px 10px 10px; min-height:118px;
              display:flex; flex-direction:column; transition:border-color .15s, background-color .15s, box-shadow .15s; }
-  .station.span2 { grid-row: span 2; }
   .station.empty-slot { visibility:hidden; }
   .station.over-ok { border-color:var(--green); background:#16302A; box-shadow:0 0 0 2px rgba(47,179,122,.3); }
   .station.over-learn { border-color:var(--amber); background:#332B1A; box-shadow:0 0 0 2px rgba(224,168,62,.3); }
@@ -132,7 +131,7 @@ function render(args) {
     });
     args.shared.forEach((sid, i) => {
       const box = stationBox(sid, shift.id, staffByKey, 1, args.columns + 1 + i);
-      box.classList.add("span2");
+      box.style.gridRow = "1 / span " + args.rows.length;   // shared boxes run the full height
       grid.appendChild(box);
     });
     lane.appendChild(grid);
