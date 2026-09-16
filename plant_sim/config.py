@@ -637,6 +637,18 @@ ALLOCATION_PRESSURE_THRESHOLD_M2 = 150.0
 ALLOCATION_MAX_REBALANCE_MOVES = 6
 
 
+# Which Thermo CNC is the "special" machine. [REAL, per the plant] C6 is
+# mostly used for special orders and takes the majority of remakes, so the
+# engine works it as its own lane: specials + remakes are cut on C6 first,
+# the other machines cut regular work first, and each only takes the other
+# kind of work when its own lane runs dry. Whether C6 is manned at all comes
+# from the roster's "machine" column (see Simulator._cnc_thermo_lanes).
+CNC_THERMO_SPECIAL_MACHINE = "C6"
+
+# [ASSUMPTION] share of Thermo intake that is a "special order" (non-standard
+# work routed to C6). No data yet - replace with the real share when known.
+DEFAULT_SPECIAL_ORDER_PCT = 10.0
+
 # Remake loop. [REAL] Both figures now come from the live lead-time dashboard
 # (Thermo, YTD through 11 Sep 2026): 4,015 of 57,110 complete parts were
 # remakes (7.03%), and remakes take only 0.32 days longer on average than
@@ -704,6 +716,8 @@ def validate_config() -> None:
         problems.append(f"INTAKE_WINDOW_HOURS must be a [start, end) inside 0-24, got {INTAKE_WINDOW_HOURS}")
     if SIMULATION_WARMUP_DAYS < 0:
         problems.append("SIMULATION_WARMUP_DAYS cannot be negative")
+    if CNC_THERMO_SPECIAL_MACHINE not in STATIONS["cnc_thermo"].machines:
+        problems.append(f"CNC_THERMO_SPECIAL_MACHINE '{CNC_THERMO_SPECIAL_MACHINE}' is not one of cnc_thermo's machines")
     if problems:
         raise ValueError("plant_sim.config is inconsistent:\n  - " + "\n  - ".join(problems))
 

@@ -45,7 +45,8 @@ FLOOR_MAP = [
     {"station": "cnc_thermo", "machine": "B1224",       "x": 13, "y": 2,  "w": 11, "h": 30},
     {"station": "cnc_thermo", "machine": "Weeke (new)", "x": 25, "y": 2,  "w": 11, "h": 30},
     {"station": "cnc_1536",   "x": 13, "y": 36, "w": 11, "h": 28},
-    {"station": "cnc_thermo", "machine": "C6",          "x": 25, "y": 36, "w": 11, "h": 28},
+    {"station": "cnc_thermo", "machine": "C6",          "x": 25, "y": 36, "w": 11, "h": 28,
+     "note": "special orders & remakes"},
     # Cut & Clash corner
     {"station": "edge_bander", "x": 1,  "y": 70, "w": 11, "h": 28},
     {"station": "optimising",  "x": 13, "y": 70, "w": 11, "h": 28},

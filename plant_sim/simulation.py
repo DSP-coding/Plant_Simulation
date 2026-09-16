@@ -56,6 +56,10 @@ class SimulationSettings:
     remake_enabled: bool = True
     remake_rate_pct: float = cfg.DEFAULT_REMAKE_RATE_PCT
     remake_days: float = cfg.DEFAULT_REMAKE_DAYS
+    # Share of Thermo intake that is a special (non-standard) order. Specials
+    # and remakes are cut on C6 first at the Thermo CNCs - see
+    # cfg.CNC_THERMO_SPECIAL_MACHINE.
+    special_order_pct: float = cfg.DEFAULT_SPECIAL_ORDER_PCT
     sick_enabled: bool = False
     random_seed: int | None = None
     # Editable "area capacity" per station, in m2/month AT IDEAL STAFFING on
@@ -102,6 +106,8 @@ class SimulationSettings:
             p.append(f"remake_rate_pct must be 0-100, got {self.remake_rate_pct}")
         if self.remake_days < 0:
             p.append("remake_days cannot be negative")
+        if not (0 <= self.special_order_pct <= 100):
+            p.append(f"special_order_pct must be 0-100, got {self.special_order_pct}")
         for sid, v in self.station_capacity_m2_per_month.items():
             if sid not in cfg.STATIONS:
                 p.append(f"station_capacity_m2_per_month has unknown station {sid!r}")
@@ -189,6 +195,10 @@ class SimulationResult:
     # Who was on which station, per reporting day and shift: "day|label" ->
     # {station_id: [operator names]} - drives the names in the floor playback.
     staffing_by_shift: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    # The C6 lane at the Thermo CNCs (see cfg.CNC_THERMO_SPECIAL_MACHINE):
+    # utilisation of C6 vs the other machines, how much of the remake /
+    # special work actually got cut on C6, and how often C6 was unmanned.
+    cnc_thermo_lanes: dict[str, float] = field(default_factory=dict)
 
     @property
     def has_completions(self) -> bool:
@@ -273,6 +283,13 @@ class Simulator:
         station_starved_hours = {sid: 0.0 for sid in cfg.STATIONS}
         cnc_minutes_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
         completed_m2_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
+        # C6-lane bookkeeping (machine-minutes, reporting window only)
+        lanes = {"c6_cap": 0.0, "c6_used": 0.0, "main_cap": 0.0, "main_used": 0.0,
+                 "remake_min_total": 0.0, "remake_min_on_c6": 0.0,
+                 "special_min_total": 0.0, "special_min_on_c6": 0.0,
+                 "c6_active_hours": 0.0, "c6_unmanned_hours": 0.0}
+        machine_by_op = {op.id: (op.machine if op.home_station == "cnc_thermo" else "")
+                         for op in self.roster.operators}
 
         cum_intake = cum_completed = cum_remade = 0.0
         # Whole-run totals (warm-up included) for the mass-balance self-check.
@@ -313,8 +330,15 @@ class Simulator:
                 for cls, pct in mix.items():
                     qty = intake_per_hour * pct / 100.0
                     if qty > EPS_M2:
-                        entry = cfg.ROUTE_ENTRY_STATION[cfg.PRODUCT_CLASSES[cls].route]
-                        queues[entry].add(Batch(h, qty, cls))
+                        route = cfg.PRODUCT_CLASSES[cls].route
+                        entry = cfg.ROUTE_ENTRY_STATION[route]
+                        # Thermo intake is split into special orders (routed to
+                        # C6) and regular work; Cut & Clash has no such split.
+                        special = qty * s.special_order_pct / 100.0 if route == cfg.Route.THERMO else 0.0
+                        if qty - special > EPS_M2:
+                            queues[entry].add(Batch(h, qty - special, cls))
+                        if special > EPS_M2:
+                            queues[entry].add(Batch(h, special, cls, is_special=True))
                         intake_all += qty
                         if recording:
                             cum_intake += qty
@@ -351,6 +375,15 @@ class Simulator:
                     staffing_by_shift[f"{record_day_index}|{label}"] = names_by_station
 
             ops_per_station = self._headcount_per_station(allocation_cache, day_index, label_by_station)
+            cnc_label = label_by_station["cnc_thermo"]
+            cnc_tags = ([machine_by_op.get(oid, "") for oid, st in
+                         allocation_cache.get((day_index, cnc_label), {}).items() if st == "cnc_thermo"]
+                        if cnc_label else [])
+            c6_minutes, main_minutes = self._cnc_thermo_lanes(cnc_tags)
+            if recording and cnc_label:
+                lanes["c6_active_hours"] += 1
+                if c6_minutes <= 0:
+                    lanes["c6_unmanned_hours"] += 1
 
             # -- diagnostics: is anyone there, is there anything to do? --
             if recording:
@@ -363,7 +396,8 @@ class Simulator:
                         station_starved_hours[sid] += 1
 
             hour_out = self._process_hour(queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
-                                          cnc_minutes_by_class, station_out_sum, station_cap_sum)
+                                          cnc_minutes_by_class, station_out_sum, station_cap_sum,
+                                          (c6_minutes, main_minutes), lanes if recording else None)
 
             # -- packing/despatch output -> completed or remade --
             for batch in hour_out.get(cfg.SHARED_TERMINAL_STATION, []):
@@ -385,7 +419,8 @@ class Simulator:
                         completed_m2_by_class[batch.product_class] += good_qty
                         cum_completed += good_qty
                 if bad_qty > EPS_M2:
-                    remake = Batch(batch.created_hour, bad_qty, batch.product_class, is_remake=True)
+                    remake = Batch(batch.created_hour, bad_qty, batch.product_class,
+                                   is_remake=True, is_special=batch.is_special)
                     remake_holding.append((h + s.remake_days * 24.0, remake))
                     if recording:
                         cum_remade += bad_qty
@@ -473,6 +508,16 @@ class Simulator:
             intake_hours_in_window=intake_hours_in_window,
             notes=notes,
             staffing_by_shift=staffing_by_shift,
+            cnc_thermo_lanes={
+                "c6_utilisation": lanes["c6_used"] / lanes["c6_cap"] if lanes["c6_cap"] > 0 else 0.0,
+                "main_utilisation": lanes["main_used"] / lanes["main_cap"] if lanes["main_cap"] > 0 else 0.0,
+                "remakes_on_c6_pct": (100.0 * lanes["remake_min_on_c6"] / lanes["remake_min_total"]
+                                      if lanes["remake_min_total"] > 0 else 0.0),
+                "specials_on_c6_pct": (100.0 * lanes["special_min_on_c6"] / lanes["special_min_total"]
+                                       if lanes["special_min_total"] > 0 else 0.0),
+                "c6_active_hours": lanes["c6_active_hours"],
+                "c6_unmanned_hours": lanes["c6_unmanned_hours"],
+            },
         )
 
     # -----------------------------------------------------------------
@@ -620,8 +665,36 @@ class Simulator:
     # One hour of production
     # -----------------------------------------------------------------
 
+    @staticmethod
+    def _cnc_thermo_lanes(machine_tags: list[str]) -> tuple[float, float]:
+        """Machine-minutes available this hour on the C6 lane and on the other
+        Thermo CNCs, from the roster machine tags of everyone assigned to
+        cnc_thermo. A person tagged to a machine mans that machine; people
+        with no tag (floaters / cover) fill unmanned production machines
+        first and C6 last - a cover operator is sent to keep production
+        going, not to run specials. Two people tagged to one machine still
+        only man one machine."""
+        station = cfg.STATIONS["cnc_thermo"]
+        special = cfg.CNC_THERMO_SPECIAL_MACHINE
+        machines = list(station.machines)
+        manned = {t for t in machine_tags if t in machines}
+        spare = sum(1 for t in machine_tags if t not in machines)            # untagged floaters / cover
+        spare += sum(max(0, machine_tags.count(m) - 1) for m in manned)      # 2nd person on one machine
+        fill_order = [m for m in machines if m != special] + [special]
+        for m in fill_order:
+            if spare <= 0:
+                break
+            if m not in manned:
+                manned.add(m)
+                spare -= 1
+        per_machine = 60.0 * cfg.CNC_UTILISATION
+        c6 = per_machine if special in manned else 0.0
+        main = per_machine * len([m for m in manned if m != special])
+        return c6, main
+
     def _process_hour(self, queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
-                       cnc_minutes_by_class, station_out_sum, station_cap_sum) -> dict[str, list[Batch]]:
+                       cnc_minutes_by_class, station_out_sum, station_cap_sum,
+                       thermo_lanes=(0.0, 0.0), lane_stats=None) -> dict[str, list[Batch]]:
         """Run one simulated hour of production through every station, in
         cfg.PROCESSING_ORDER (downstream first), and return
         {station_id: [output batches]}.
@@ -639,7 +712,10 @@ class Simulator:
             next_qid = cfg.downstream_queue_for(sid)
             room = queues[next_qid].headroom(self.settings.buffer_cap_m2) if next_qid else math.inf
 
-            if sid in cfg.CNC_STATION_IDS:
+            if sid == "cnc_thermo":
+                produced = self._run_thermo_cncs(queue, room, cnc_min_per_m2[sid], thermo_lanes,
+                                                 cnc_minutes_by_class, station_cap_sum, lane_stats)
+            elif sid in cfg.CNC_STATION_IDS:
                 machines_manned = min(ops, station.num_machines)
                 available_minutes = machines_manned * 60.0 * cfg.CNC_UTILISATION
                 station_cap_sum[sid] += available_minutes  # minutes, not m2 - see utilisation
@@ -659,6 +735,64 @@ class Simulator:
                 for b in produced:
                     queues[next_qid].add(b)
         return out
+
+    @staticmethod
+    def _run_thermo_cncs(queue, room, min_per_m2, thermo_lanes, cnc_minutes_by_class,
+                         station_cap_sum, lane_stats) -> list[Batch]:
+        """The Thermo CNCs as two lanes. C6 cuts specials and remakes first,
+        the other machines cut regular work first; whatever minutes a lane has
+        left over go to the other kind of work, so nothing sits idle while
+        there is work of any kind waiting."""
+        c6_minutes, main_minutes = thermo_lanes
+        down = any(math.isinf(v) for v in min_per_m2.values())   # capacity set to zero in the UI
+        station_cap_sum["cnc_thermo"] += c6_minutes + main_minutes
+        if lane_stats is not None:
+            lane_stats["c6_cap"] += c6_minutes
+            lane_stats["main_cap"] += main_minutes
+        if down:
+            return []
+
+        def is_special_work(b):
+            return b.is_remake or b.is_special
+
+        def cost(batches):
+            return sum(b.qty * min_per_m2[b.product_class] for b in batches)
+
+        produced: list[Batch] = []
+        room_left = room
+        # 1. each lane takes its own kind of work first
+        c6_first = queue.consume_cnc(c6_minutes, room_left, min_per_m2, wants=is_special_work)
+        room_left -= sum(b.qty for b in c6_first)
+        main_first = queue.consume_cnc(main_minutes, room_left, min_per_m2, wants=lambda b: not is_special_work(b))
+        room_left -= sum(b.qty for b in main_first)
+        # 2. leftover minutes cross over
+        c6_left = c6_minutes - cost(c6_first)
+        main_left = main_minutes - cost(main_first)
+        c6_over = queue.consume_cnc(c6_left, room_left, min_per_m2, wants=lambda b: not is_special_work(b))
+        room_left -= sum(b.qty for b in c6_over)
+        main_over = queue.consume_cnc(main_left, room_left, min_per_m2, wants=is_special_work)
+
+        on_c6 = c6_first + c6_over
+        on_main = main_first + main_over
+        produced = on_c6 + on_main
+        for b in produced:
+            cnc_minutes_by_class[b.product_class] += b.qty * min_per_m2[b.product_class]
+        if lane_stats is not None:
+            lane_stats["c6_used"] += cost(on_c6)
+            lane_stats["main_used"] += cost(on_main)
+            for b in produced:
+                m = b.qty * min_per_m2[b.product_class]
+                if b.is_remake:
+                    lane_stats["remake_min_total"] += m
+                if b.is_special:
+                    lane_stats["special_min_total"] += m
+            for b in on_c6:
+                m = b.qty * min_per_m2[b.product_class]
+                if b.is_remake:
+                    lane_stats["remake_min_on_c6"] += m
+                if b.is_special:
+                    lane_stats["special_min_on_c6"] += m
+        return produced
 
     # -----------------------------------------------------------------
     # KPIs

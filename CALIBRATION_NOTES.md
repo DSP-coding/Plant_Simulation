@@ -45,6 +45,8 @@ it and shows the outcome, including a live animated factory-floor view.
 | Thermo avg lead time | 8.66 working days | **REAL** | live lead-time dashboard (8.64 non-remake / 8.97 remake) - used by the reality-check panel |
 | Product mix (Thermo / Cut & Clash) | 80.6% / 19.4% | **REAL** | product_2026.xlsx. S1/S2/S3 split within Thermo still ASSUMPTION |
 | Staff roster (who, where, which shift) | 44 people | **REAL** | shop-floor sheet, Sep 2026 (see session 4); Press 1/2 split and cross-skills still ASSUMPTION |
+| C6 = special orders + most remakes | lane rule | **REAL** (per the plant) | C6 cuts specials/remakes first, the other CNCs cut regular work first, crossover only when a lane runs dry |
+| Special-order share of Thermo intake | 10% | ASSUMPTION | no data yet - sidebar input `Special orders (% of Thermo intake)` |
 | Intake timing | weekdays, first 8 h of day shift | ASSUMPTION | office hours; was spread over all 168 h/week before session 3 |
 | Target lead time - Thermo | 10 working days | **REAL** | confirmed, excludes weekends |
 | Target lead time - Cut & Clash | 7 calendar days | UNCONFIRMED | assumed calendar days pending confirmation |
@@ -238,6 +240,23 @@ Weeke 480, Edge bander / Drill). It's descriptive only: capacity still
 comes from the station's machine count and rates. The floor map uses it
 to seat people on the right tile.
 
+## Session 4c - C6 as the specials / remakes machine
+
+Per the plant, C6 is mostly used for special orders and takes the majority
+of remakes. The Thermo CNCs are now worked as two lanes: **C6** cuts
+specials and remakes first, the other three machines cut regular work
+first, and each only takes the other kind of work when its own lane runs
+dry. Whether C6 is manned comes from the roster's `machine` tag (people
+with no tag - cover / floaters - fill the production machines first and
+C6 last). "Special order" is a new share of Thermo intake (10%
+[ASSUMPTION]) tagged on the work. The results tab shows C6 vs other-CNC
+utilisation, the % of remakes and specials actually cut on C6, and the
+hours C6 was unmanned.
+
+Effect at the real roster: remakes and specials are 100% on C6; moving
+Raymond (C6 days) to Press leaves C6 unmanned 130 of 360 running hours
+and lifts the Thermo remake penalty from +0.77 to +0.93 working days.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -253,6 +272,8 @@ to seat people on the right tile.
 0b. ~~Cut & Clash DIFOT is 43%~~ **Resolved (session 4)** by the real
    roster: with Nirmal on 1536 days, Cut & Clash runs at 100% DIFOT and
    3.5-day lead time.
+0e. **What share of Thermo intake is a special order?** Currently a 10%
+   placeholder in the sidebar.
 0d. **Press 1 vs Press 2**: the sheet just says "Press"; the 6 day / 5
    afternoon people are split between the two machines as a placeholder.
    Also, is the MB Sander genuinely a one-person job (as rostered), or is

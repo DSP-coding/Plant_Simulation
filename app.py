@@ -189,7 +189,12 @@ with st.sidebar:
                 settings_problems.append(f"{crew_name} crew schedule: {e}")
 
     st.divider()
-    st.header("Remake loop")
+    st.header("Remakes & special orders")
+    special_order_pct = st.number_input("Special orders (% of Thermo intake)", 0.0, 100.0,
+                                        cfg.DEFAULT_SPECIAL_ORDER_PCT, step=1.0,
+                                        help=f"Non-standard Thermo work. Specials and remakes are cut on "
+                                             f"{cfg.CNC_THERMO_SPECIAL_MACHINE} first; the other CNCs cut regular "
+                                             "work first. The real share isn't known yet - this default is a guess.")
     remake_enabled = st.checkbox("Enable remake loop", value=True)
     remake_rate_pct = st.number_input("Remake rate (% of packing output)", 0.0, 100.0,
                                        cfg.DEFAULT_REMAKE_RATE_PCT, step=0.1)
@@ -219,6 +224,7 @@ def run_simulation() -> None:
             target_lead_days=target_lead_days, shift_schedules=shift_schedules,
             station_capacity_m2_per_month=station_capacity_m2_per_month,
             remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
+            special_order_pct=special_order_pct,
             sick_enabled=sick_enabled, random_seed=int(seed),
         )
         with st.spinner("Simulating..."):
@@ -450,6 +456,30 @@ with tab_results:
                           f"{penalty:+.2f} {unit}" if penalty is not None else "—",
                           help=f"Avg lead of remade work minus non-remade ({rm.remake_share_pct:.1f}% of "
                                "completed m² had been remade).")
+
+        # -- the C6 lane at the Thermo CNCs --
+        lanes = result.cnc_thermo_lanes
+        if lanes:
+            st.divider()
+            label("Thermo CNCs", teal=True)
+            st.subheader(f"{cfg.CNC_THERMO_SPECIAL_MACHINE} lane - special orders & remakes")
+            st.caption(f"{cfg.CNC_THERMO_SPECIAL_MACHINE} cuts specials and remakes first; the other three CNCs cut "
+                       "regular work first; each takes the other kind only when its own lane runs dry. "
+                       f"{cfg.CNC_THERMO_SPECIAL_MACHINE} is manned when someone on the roster is tagged to it "
+                       "(drag a person onto its box on the Factory Floor).")
+            l1, l2, l3, l4, l5 = st.columns(5)
+            l1.metric(f"{cfg.CNC_THERMO_SPECIAL_MACHINE} utilisation", f"{lanes['c6_utilisation'] * 100:.0f}%")
+            l2.metric("Other CNCs utilisation", f"{lanes['main_utilisation'] * 100:.0f}%")
+            l3.metric(f"Remakes cut on {cfg.CNC_THERMO_SPECIAL_MACHINE}", f"{lanes['remakes_on_c6_pct']:.0f}%")
+            l4.metric(f"Specials cut on {cfg.CNC_THERMO_SPECIAL_MACHINE}", f"{lanes['specials_on_c6_pct']:.0f}%")
+            l5.metric(f"{cfg.CNC_THERMO_SPECIAL_MACHINE} unmanned",
+                      f"{lanes['c6_unmanned_hours']:.0f} of {lanes['c6_active_hours']:.0f} h",
+                      help="Hours the CNC crew was running but nobody was on "
+                           f"{cfg.CNC_THERMO_SPECIAL_MACHINE} - specials and remakes queued behind regular work.")
+            if lanes["c6_unmanned_hours"] > 0:
+                st.warning(f"{cfg.CNC_THERMO_SPECIAL_MACHINE} had nobody on it for "
+                           f"{lanes['c6_unmanned_hours']:.0f} running hours - remakes and special orders had to "
+                           "queue behind regular work on the other machines.")
 
         # -- reality check against the real plant figures in config.py --
         st.divider()

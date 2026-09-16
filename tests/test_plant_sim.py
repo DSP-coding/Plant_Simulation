@@ -142,6 +142,18 @@ class QueueTests(unittest.TestCase):
         q.add(Batch(0, -1.0, "S1"))
         self.assertEqual(len(q), 0)
 
+    def test_cnc_lane_filter_leaves_other_work_in_place(self):
+        q = StationQueue()
+        q.add(Batch(0, 10, "S1"))
+        q.add(Batch(1, 10, "S1", is_remake=True))
+        q.add(Batch(2, 10, "S1", is_special=True))
+        rates = {"S1": 1.0}
+        out = q.consume_cnc(100, 100, rates, wants=lambda b: b.is_remake or b.is_special)
+        self.assertEqual([(b.created_hour, b.is_remake, b.is_special) for b in out],
+                         [(1, True, False), (2, False, True)])
+        self.assertEqual([b.created_hour for b in q.batches], [0])   # regular work untouched, still first
+        self.assertEqual([b.created_hour for b in q.consume_cnc(100, 100, rates)], [0])
+
     def test_cnc_consumption_respects_minutes_and_room(self):
         q = StationQueue()
         q.add(Batch(0, 10, "S1"))
@@ -498,6 +510,40 @@ class FloorEditorTests(unittest.TestCase):
         cnc_day = len(by[("cnc_thermo", "day")]) + sum(1 for o in r.operators
                                                         if o.shift == "day" and "cnc_thermo" in o.skills and o.home_station.startswith("press"))
         self.assertEqual(cnc_day, cfg.STATIONS["cnc_thermo"].num_machines)
+
+    def test_cnc_thermo_lane_manning(self):
+        f = Simulator._cnc_thermo_lanes
+        m = 60.0 * cfg.CNC_UTILISATION
+        self.assertEqual(f([]), (0.0, 0.0))
+        self.assertEqual(f(["C6"]), (m, 0.0))
+        self.assertEqual(f(["B1224", "Weeke (old)"]), (0.0, 2 * m))
+        self.assertEqual(f(["", "", ""]), (0.0, 3 * m))              # cover fills production machines first
+        self.assertEqual(f(["", "", "", ""]), (m, 3 * m))            # ...and C6 last
+        self.assertEqual(f(["C6", "C6"]), (m, m))                    # 2nd person on C6 runs another machine
+        self.assertEqual(f(["C6", "", "", "", "", ""]), (m, 3 * m))  # never more than 4 machines
+
+    def test_remakes_and_specials_go_to_c6_when_it_is_manned(self):
+        base = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.STATIONS if sid not in ("admin", "cnc_thermo")
+                for sh in cfg.SHIFT_LABELS]
+        with_c6 = Roster(base + [Operator("c6d", "C6 day", "cnc_thermo", shift="day", machine="C6"),
+                                 Operator("c6a", "C6 aft", "cnc_thermo", shift="aft", machine="C6"),
+                                 Operator("w1", "W old", "cnc_thermo", shift="day", machine="Weeke (old)"),
+                                 Operator("w2", "W old aft", "cnc_thermo", shift="aft", machine="Weeke (old)")])
+        r = Simulator(with_c6, settings(horizon="week", remake_rate_pct=10.0, special_order_pct=20.0)).run()
+        self.assertEqual(r.cnc_thermo_lanes["c6_unmanned_hours"], 0)
+        self.assertGreater(r.cnc_thermo_lanes["remakes_on_c6_pct"], 90.0)
+        self.assertGreater(r.cnc_thermo_lanes["specials_on_c6_pct"], 90.0)
+        # Nobody tagged to C6: it stays unmanned, specials/remakes still get cut (on the other machines).
+        no_c6 = Roster(base + [Operator("w1", "W old", "cnc_thermo", shift="day", machine="Weeke (old)"),
+                               Operator("w2", "W old aft", "cnc_thermo", shift="aft", machine="Weeke (old)")])
+        r2 = Simulator(no_c6, settings(horizon="week", remake_rate_pct=10.0, special_order_pct=20.0)).run()
+        self.assertEqual(r2.cnc_thermo_lanes["c6_unmanned_hours"], r2.cnc_thermo_lanes["c6_active_hours"])
+        self.assertEqual(r2.cnc_thermo_lanes["specials_on_c6_pct"], 0.0)
+        self.assertGreater(r2.cum_completed_m2, 0)
+
+    def test_special_share_is_validated(self):
+        with self.assertRaises(ValueError):
+            SimulationSettings(special_order_pct=150)
 
     def test_result_records_who_was_where(self):
         roster = Roster([Operator("d", "Day Op", "cnc_1536", shift="day"),

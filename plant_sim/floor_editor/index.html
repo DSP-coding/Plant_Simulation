@@ -133,6 +133,10 @@ function render(args) {
     map.className = "map";
     args.floor.forEach(area => {
       const box = stationBox(area.station, shift.id, staffByKey, area.children || [], area.machine || "");
+      if (area.note) {
+        const n = document.createElement("div"); n.className = "unassigned-label"; n.textContent = area.note;
+        box.insertBefore(n, box.querySelector(".chips"));
+      }
       box.style.left = area.x + "%"; box.style.top = area.y + "%";
       box.style.width = area.w + "%"; box.style.height = area.h + "%";
       map.appendChild(box);
