@@ -186,6 +186,9 @@ class SimulationResult:
     station_starved_hours: dict[str, float]    # running and staffed, but nothing to do
     intake_hours_in_window: int
     notes: list[str] = field(default_factory=list)   # anything the engine wants the reader to know
+    # Who was on which station, per reporting day and shift: "day|label" ->
+    # {station_id: [operator names]} - drives the names in the floor playback.
+    staffing_by_shift: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
     @property
     def has_completions(self) -> bool:
@@ -261,6 +264,7 @@ class Simulator:
 
         trace: list[dict] = []
         attendance_log: list[dict] = []
+        staffing_by_shift: dict[str, dict[str, list[str]]] = {}
         completed_log: list[dict] = []   # {"day", "qty", "lead_days", "cls", "route", "remake"}
         station_out_sum = {sid: 0.0 for sid in cfg.STATIONS}
         station_cap_sum = {sid: 0.0 for sid in cfg.STATIONS}
@@ -331,15 +335,20 @@ class Simulator:
                 assignment = allocate_shift(available_ops, active_for_label, queue_snapshot)
                 allocation_cache[key] = assignment
                 if recording:
+                    names_by_station: dict[str, list[str]] = {}
                     for op in self.roster.operators:
                         if op.shift != label:
                             continue
+                        station = assignment.get(op.id) if op.id not in absent_ids else None
+                        if station:
+                            names_by_station.setdefault(station, []).append(op.name)
                         attendance_log.append({
                             "day": record_day_index, "operator_id": op.id, "operator_name": op.name,
                             "shift": label,
                             "status": self._attendance_status(op, weekday, label, absent_ids, assignment),
-                            "station": assignment.get(op.id) if op.id not in absent_ids else None,
+                            "station": station,
                         })
+                    staffing_by_shift[f"{record_day_index}|{label}"] = names_by_station
 
             ops_per_station = self._headcount_per_station(allocation_cache, day_index, label_by_station)
 
@@ -389,6 +398,7 @@ class Simulator:
                 buf = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
                 trace.append({
                     "h": h - warmup_hours,
+                    "day": record_day_index,
                     "buf": buf,
                     "out": {sid: sum(b.qty for b in batches) for sid, batches in hour_out.items()},
                     "ops": ops_per_station,
@@ -462,6 +472,7 @@ class Simulator:
             station_starved_hours=station_starved_hours,
             intake_hours_in_window=intake_hours_in_window,
             notes=notes,
+            staffing_by_shift=staffing_by_shift,
         )
 
     # -----------------------------------------------------------------

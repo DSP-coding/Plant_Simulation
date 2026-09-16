@@ -67,6 +67,10 @@ _TEMPLATE = r"""
   .on-dot.day { background:var(--day); box-shadow:0 0 5px var(--day); }
   .on-dot.aft { background:var(--aft); box-shadow:0 0 5px var(--aft); }
   .ops-label { font-size:9.5px; color:var(--muted); margin-top:2px; }
+  .names { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; min-height:16px; }
+  .name-tag { font-size:8.5px; background:#1d2a3a; border:1px solid var(--border); border-radius:8px;
+              padding:1px 5px; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+  .name-tag.more { color:var(--muted); }
   .buf-label { font-size:9px; color:var(--muted); margin-top:5px; }
   .buf-value { font-size:16px; font-weight:800; }
   .buf-bar-bg { background:#253242; border-radius:4px; height:7px; overflow:hidden; margin-top:4px; }
@@ -97,6 +101,35 @@ _TEMPLATE = r"""
 const ROWS = __ROWS_JSON__;
 const TRACE = __TRACE_JSON__;
 const MAXBUF = __MAXBUF_JSON__;
+const STAFF = __STAFF_JSON__;   // "day|shift" -> {station: [names]}
+const MAX_NAMES = 4;
+
+function shortName(full) {
+  // "Peniamina (Ben) Tasele" -> "Ben T.", "Jerard Mendoza" -> "Jerard M."
+  const nick = full.match(/\(([^)]+)\)/);
+  const parts = full.replace(/\(.*?\)/g, '').trim().split(/\s+/);
+  const first = nick ? nick[1] : parts[0];
+  const last = parts.length > 1 ? parts[parts.length - 1][0] + '.' : '';
+  return (first + ' ' + last).trim();
+}
+
+function renderNames(el, names) {
+  const key = names.join('|');
+  if (el.dataset.key === key) return;   // unchanged since last frame
+  el.dataset.key = key;
+  el.innerHTML = '';
+  names.slice(0, MAX_NAMES).forEach(n => {
+    const tag = document.createElement('span');
+    tag.className = 'name-tag'; tag.textContent = shortName(n); tag.title = n;
+    el.appendChild(tag);
+  });
+  if (names.length > MAX_NAMES) {
+    const more = document.createElement('span');
+    more.className = 'name-tag more'; more.textContent = '+' + (names.length - MAX_NAMES);
+    more.title = names.slice(MAX_NAMES).join(', ');
+    el.appendChild(more);
+  }
+}
 
 const rowsEl = document.getElementById('rows');
 ROWS.forEach(row => {
@@ -115,6 +148,7 @@ ROWS.forEach(row => {
       <div class="station-icon">${st.icon}</div>
       <h4>${st.label}</h4>
       <div class="ops-label" id="ops-${row.key}-${st.id}">0 staff</div>
+      <div class="names" id="names-${row.key}-${st.id}"></div>
       <div class="buf-label">Buffer (m²)</div>
       <div class="buf-value" id="buf-${row.key}-${st.id}">0</div>
       <div class="buf-bar-bg"><div class="buf-bar-fill" id="bar-${row.key}-${st.id}"></div></div>`;
@@ -159,6 +193,9 @@ function render(hourIdx) {
       const shift = (t.shift && t.shift[st.id]) || null;
       dotEl.classList.toggle('day', shift === 'day');
       dotEl.classList.toggle('aft', shift === 'aft');
+      const namesEl = document.getElementById('names-' + row.key + '-' + st.id);
+      const onShift = shift ? ((STAFF[t.day + '|' + shift] || {})[st.id] || []) : [];
+      renderNames(namesEl, onShift);
       const bufVal = (t.buf && t.buf[st.id]) || 0;
       bufEl.textContent = Math.round(bufVal).toLocaleString();
       const maxBuf = MAXBUF[st.id] || 1;
@@ -228,8 +265,11 @@ requestAnimationFrame(animate);
 """
 
 
-def build_floor_html(trace: list[dict]) -> str:
-    """trace is SimulationResult.trace (a list of per-hour dicts)."""
+def build_floor_html(trace: list[dict], staffing_by_shift: dict[str, dict[str, list[str]]] | None = None) -> str:
+    """trace is SimulationResult.trace (a list of per-hour dicts);
+    staffing_by_shift is SimulationResult.staffing_by_shift (who was on
+    which station each day/shift) - optional, names are simply omitted
+    without it."""
     row_defs = [
         {"key": "cutclash", "label": "Cut & Clash (1536)",
          "stations": cfg.ROUTE_SEQUENCE[cfg.Route.CUT_AND_CLASH] + [cfg.SHARED_TERMINAL_STATION]},
@@ -252,6 +292,7 @@ def build_floor_html(trace: list[dict]) -> str:
     # rounded to keep the embedded JSON small even for a month-long (~730 hour) run.
     slim_trace = [
         {
+            "day": t.get("day", 0),
             "buf": {k: round(v, 1) for k, v in t["buf"].items()},
             "out": {k: round(v, 2) for k, v in t["out"].items()},
             "ops": t.get("ops", {}),
@@ -263,7 +304,7 @@ def build_floor_html(trace: list[dict]) -> str:
     if not slim_trace:
         # Nothing to animate (zero-length run) - still return a valid page
         # rather than letting the JS divide by TRACE.length == 0.
-        slim_trace = [{"buf": {}, "out": {}, "ops": {}, "active": [], "shift": {}}]
+        slim_trace = [{"day": 0, "buf": {}, "out": {}, "ops": {}, "active": [], "shift": {}}]
 
     all_station_ids = {sid for row in row_defs for sid in row["stations"]}
     max_buf = {
@@ -275,4 +316,5 @@ def build_floor_html(trace: list[dict]) -> str:
     html = html.replace("__ROWS_JSON__", json.dumps(rows_json))
     html = html.replace("__TRACE_JSON__", json.dumps(slim_trace))
     html = html.replace("__MAXBUF_JSON__", json.dumps(max_buf))
+    html = html.replace("__STAFF_JSON__", json.dumps(staffing_by_shift or {}))
     return html

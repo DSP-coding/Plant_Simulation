@@ -22,6 +22,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from plant_sim import config as cfg
+from plant_sim.floor_editor import apply_move, floor_editor, restore, snapshot
 from plant_sim.floor_view import build_floor_html
 from plant_sim.simulation import Simulator, SimulationSettings
 from plant_sim.staff import Operator, Roster, RosterError
@@ -63,6 +64,10 @@ if "roster" not in st.session_state:
     st.session_state.roster = load_roster()
 if "sim_result" not in st.session_state:
     st.session_state.sim_result = None
+if "roster_history" not in st.session_state:
+    st.session_state.roster_history = []      # undo stack for floor-editor moves
+if "floor_last_seq" not in st.session_state:
+    st.session_state.floor_last_seq = None    # last drop event already applied
 
 roster: Roster = st.session_state.roster
 
@@ -197,7 +202,71 @@ with st.sidebar:
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_staff, tab_results = st.tabs(["Staff & Skills", "Simulation Results"])
+def run_simulation() -> None:
+    """Build settings from the sidebar, run, and store the result (or show why not)."""
+    try:
+        settings = SimulationSettings(
+            horizon=horizon, intake_m2_for_horizon=intake_m2_for_horizon, mix_pct=mix_pct,
+            target_lead_days=target_lead_days, shift_schedules=shift_schedules,
+            station_capacity_m2_per_month=station_capacity_m2_per_month,
+            remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
+            sick_enabled=sick_enabled, random_seed=int(seed),
+        )
+        with st.spinner("Simulating..."):
+            st.session_state.sim_result = Simulator(roster, settings).run()
+    except (ValueError, RosterError) as e:
+        st.error(f"Could not run the simulation:\n\n```\n{e}\n```")
+
+
+def kpi_strip(result) -> None:
+    """One-line summary of a run, for the floor tab."""
+    cols = st.columns(5)
+    cols[0].metric("Completion %", f"{result.completion_pct:.0f}%")
+    cols[1].metric("DIFOT %", f"{result.overall_difot_pct:.0f}%" if result.has_completions else "—")
+    for col, rm in zip(cols[2:4], result.by_route.values()):
+        col.metric(f"{rm.label} lead ({day_unit_for(rm.route)})",
+                   f"{rm.overall_avg_lead_days:.1f}" if rm.has_completions else "—",
+                   f"DIFOT {rm.overall_difot_pct:.0f}%" if rm.has_completions else None,
+                   delta_color="off")
+    bottleneck = max(result.station_utilisation, key=result.station_utilisation.get)
+    cols[4].metric("Bottleneck", station_label(bottleneck),
+                   f"{result.station_utilisation[bottleneck] * 100:.0f}% utilised", delta_color="off")
+
+
+tab_floor, tab_staff, tab_results = st.tabs(["🏭 Factory Floor", "Staff & Skills", "Simulation Results"])
+
+with tab_floor:
+    st.subheader("Move people around the floor")
+    st.caption("Each box is a station; each chip is a person on that shift. **Drag** a chip onto "
+               "another station to change their home station, or into the other lane to change "
+               "their shift. Then **Run** to see what it does to lead time and DIFOT. Changes stay "
+               "in this session until you save the roster on the Staff & Skills tab.")
+
+    event = floor_editor(roster, shift_schedules or None)
+    if event and event.get("seq") != st.session_state.floor_last_seq:
+        st.session_state.floor_last_seq = event.get("seq")
+        before = snapshot(roster)
+        described = apply_move(roster, event)
+        if described:
+            st.session_state.roster_history.append((described, before))
+            st.session_state.roster_history = st.session_state.roster_history[-30:]
+            st.rerun()
+
+    ctl1, ctl2, ctl3 = st.columns([1, 1, 3])
+    if ctl1.button("▶ Run simulation", type="primary", key="run_floor", disabled=bool(settings_problems)):
+        run_simulation()
+    history = st.session_state.roster_history
+    if ctl2.button(f"↶ Undo last move ({len(history)})", disabled=not history, key="undo_floor"):
+        described, before = history.pop()
+        restore(roster, before)
+        st.rerun()
+    if history:
+        ctl3.caption("Recent moves: " + " · ".join(d for d, _ in history[-4:]))
+
+    if st.session_state.sim_result is not None:
+        st.divider()
+        kpi_strip(st.session_state.sim_result)
+        st.caption("Full breakdown, charts and the live playback are on the **Simulation Results** tab.")
 
 with tab_staff:
     st.subheader("Roster overview")
@@ -299,20 +368,8 @@ with tab_staff:
 with tab_results:
     if settings_problems:
         st.error("Fix these sidebar settings before running:\n\n- " + "\n- ".join(settings_problems))
-    run_clicked = st.button("▶ Run simulation", type="primary", disabled=bool(settings_problems))
-    if run_clicked:
-        try:
-            settings = SimulationSettings(
-                horizon=horizon, intake_m2_for_horizon=intake_m2_for_horizon, mix_pct=mix_pct,
-                target_lead_days=target_lead_days, shift_schedules=shift_schedules,
-                station_capacity_m2_per_month=station_capacity_m2_per_month,
-                remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
-                sick_enabled=sick_enabled, random_seed=int(seed),
-            )
-            with st.spinner("Simulating..."):
-                st.session_state.sim_result = Simulator(roster, settings).run()
-        except (ValueError, RosterError) as e:
-            st.error(f"Could not run the simulation:\n\n```\n{e}\n```")
+    if st.button("▶ Run simulation", type="primary", key="run_results", disabled=bool(settings_problems)):
+        run_simulation()
 
     result = st.session_state.sim_result
     if result is None:
@@ -421,7 +478,7 @@ with tab_results:
         st.subheader("Factory floor - live")
         st.caption("Play through the simulated period and watch units (m²) physically flow "
                    "station to station, with each box's current buffer, staffing and shift status.")
-        components.html(build_floor_html(result.trace), height=430, scrolling=True)
+        components.html(build_floor_html(result.trace, result.staffing_by_shift), height=520, scrolling=True)
 
         st.divider()
         st.subheader("Station utilisation (output / capacity while running)")

@@ -41,9 +41,13 @@ breakdown of which is which today.
   for Thermo, 7 days for Cut & Clash) rather than one blended number that
   hides which line is actually struggling.
 - Shows a live animated view of the factory floor (units flowing between
-  stations, buffers filling and draining) alongside the charts, so a
-  bottleneck is something you can watch happen, not just a number in a
-  table.
+  stations, buffers filling and draining, who is on each station) alongside
+  the charts, so a bottleneck is something you can watch happen, not just
+  a number in a table.
+- Lets you **drag people around the floor**: the Factory Floor tab draws
+  every station as a box with its rostered people as chips, one lane per
+  shift. Drag someone to another station or into the other shift, hit
+  Run, and see what it did to lead time and DIFOT - with undo.
 
 ## How it's organized
 
@@ -54,7 +58,9 @@ plant_sim/staff.py         Operator/Roster - the people
 plant_sim/orders.py        Batch/StationQueue - the work moving through stations
 plant_sim/allocation.py    Who works where each shift (home station -> floater -> rebalance)
 plant_sim/simulation.py    The hour-by-hour engine that ties it all together
-plant_sim/floor_view.py    The live animated factory-floor visualization
+plant_sim/floor_view.py    The live animated factory-floor visualization (playback)
+plant_sim/floor_editor.py  The drag-and-drop floor (Streamlit component wrapper + move rule)
+plant_sim/floor_editor/    ...and its single-file HTML/JS front end (no build step)
 data/staff_roster.csv      The actual roster - names, skills, shifts, absence rates
 tests/test_plant_sim.py    Regression tests (python -m unittest discover -s tests)
 ```
@@ -140,11 +146,14 @@ questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
 streamlit run app.py
 ```
 
-Tab 1 (Staff & Skills) edits the roster. Tab 2 (Simulation Results) runs
-the simulation and shows the outcome: KPIs, a reality check against the
-real plant's monthly figures, staffing-gap warnings, the live
-factory-floor animation, lead-time/DIFOT by product range, station
-utilisation, and attendance.
+Tab 1 (Factory Floor) is the drag-and-drop floor: move people between
+stations and shifts, Run, and read the KPI strip underneath. Tab 2 (Staff
+& Skills) edits the finer details (skills, absence rates, add/remove
+people) and saves the roster to CSV. Tab 3 (Simulation Results) shows the
+full outcome: KPIs, a reality check against the real plant's monthly
+figures, staffing-gap warnings, the live factory-floor animation with
+names, lead-time/DIFOT by product range, station utilisation, and
+attendance.
 
 ### Tests
 

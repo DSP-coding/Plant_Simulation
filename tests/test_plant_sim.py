@@ -26,6 +26,7 @@ from plant_sim.allocation import allocate_shift              # noqa: E402
 from plant_sim.orders import Batch, StationQueue             # noqa: E402
 from plant_sim.simulation import Simulator, SimulationSettings  # noqa: E402
 from plant_sim.staff import Operator, Roster, RosterError    # noqa: E402
+from plant_sim.floor_editor import apply_move, restore, snapshot  # noqa: E402
 
 ROSTER_CSV = PROJECT_ROOT / "data" / "staff_roster.csv"
 
@@ -420,6 +421,51 @@ class EngineTests(unittest.TestCase):
     def test_simulator_rejects_broken_roster(self):
         with self.assertRaises(RosterError):
             Simulator(Roster([Operator("1", "A", "not_a_station")]), settings())
+
+
+class FloorEditorTests(unittest.TestCase):
+    """The drag-and-drop move rule and undo, independent of the browser."""
+
+    def test_drop_on_station_changes_home_and_keeps_old_home_as_skill(self):
+        r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day", skills={"cnc_1536"})])
+        msg = apply_move(r, {"seq": 1, "op_id": "j", "to_station": "cnc_1536", "to_shift": "day"})
+        op = r.get("j")
+        self.assertEqual(op.home_station, "cnc_1536")
+        self.assertEqual(op.shift, "day")
+        self.assertEqual(op.skills, {"cnc_thermo"})   # old home kept, new home not double-listed
+        self.assertIn("CNC (Thermo)", msg)
+        r.validate()
+
+    def test_drop_in_other_lane_changes_shift(self):
+        r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day")])
+        msg = apply_move(r, {"seq": 1, "op_id": "j", "to_station": "cnc_thermo", "to_shift": "aft"})
+        self.assertEqual(r.get("j").shift, "aft")
+        self.assertIn("day → aft", msg)
+
+    def test_noop_and_invalid_drops(self):
+        r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day")])
+        self.assertIsNone(apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day"}))
+        self.assertIsNone(apply_move(r, {"op_id": "nobody", "to_station": "sanding", "to_shift": "day"}))
+        self.assertIsNone(apply_move(r, {"op_id": "j", "to_station": "not_a_station", "to_shift": "day"}))
+        self.assertIsNone(apply_move(r, {"op_id": "j", "to_station": "sanding", "to_shift": "night"}))
+        self.assertEqual(r.get("j").home_station, "cnc_thermo")
+
+    def test_snapshot_restore_undoes_a_move(self):
+        r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day", skills={"cnc_1536"})])
+        before = snapshot(r)
+        apply_move(r, {"op_id": "j", "to_station": "sanding", "to_shift": "aft"})
+        self.assertEqual(r.get("j").home_station, "sanding")
+        restore(r, before)
+        op = r.get("j")
+        self.assertEqual((op.home_station, op.shift, op.skills), ("cnc_thermo", "day", {"cnc_1536"}))
+
+    def test_result_records_who_was_where(self):
+        roster = Roster([Operator("d", "Day Op", "cnc_1536", shift="day"),
+                         Operator("a", "Aft Op", "cnc_1536", shift="aft")])
+        r = Simulator(roster, settings(horizon="day")).run()
+        self.assertEqual(r.staffing_by_shift["0|day"]["cnc_1536"], ["Day Op"])
+        self.assertEqual(r.staffing_by_shift["0|aft"]["cnc_1536"], ["Aft Op"])
+        self.assertEqual(r.trace[0]["day"], 0)
 
 
 @unittest.skipUnless(os.environ.get("PLANT_SIM_UI_TESTS", "1") == "1", "UI tests disabled")
