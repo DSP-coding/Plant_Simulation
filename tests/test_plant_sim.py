@@ -215,9 +215,9 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(a, {"a": None})
 
     def test_floater_goes_to_neediest_qualified_station(self):
-        ops = [Operator("a", "A", "sanding", skills={"despatch", "eb_drilling"})]
-        a = allocate_shift(ops, {"despatch", "eb_drilling"}, {"despatch": 10, "eb_drilling": 500})
-        self.assertEqual(a["a"], "eb_drilling")
+        ops = [Operator("a", "A", "sanding", skills={"despatch", "edge_bander"})]
+        a = allocate_shift(ops, {"despatch", "edge_bander"}, {"despatch": 10, "edge_bander": 500})
+        self.assertEqual(a["a"], "edge_bander")
 
     def test_press_pile_is_visible_to_the_allocator(self):
         # Two people on sanding (quiet), one of them can press. The shared
@@ -232,13 +232,13 @@ class AllocationTests(unittest.TestCase):
     def test_never_exceeds_machine_headcount(self):
         # Two people whose home is the single-machine CNC 1536: the surplus
         # one should be moved to help a drowning station they can cover.
-        ops = [Operator("a", "A", "cnc_1536", skills={"eb_drilling"}),
-               Operator("b", "B", "cnc_1536", skills={"eb_drilling"}),
-               Operator("c", "C", "eb_drilling")]
-        queue = {"cnc_1536": 50.0, "eb_drilling": 900.0}
-        a = allocate_shift(ops, {"cnc_1536", "eb_drilling"}, queue)
+        ops = [Operator("a", "A", "cnc_1536", skills={"sanding"}),
+               Operator("b", "B", "cnc_1536", skills={"sanding"}),
+               Operator("c", "C", "sanding")]
+        queue = {"cnc_1536": 50.0, "sanding": 900.0}
+        a = allocate_shift(ops, {"cnc_1536", "sanding"}, queue)
         self.assertEqual(sum(1 for s in a.values() if s == "cnc_1536"), 1)
-        self.assertEqual(sum(1 for s in a.values() if s == "eb_drilling"), 2)
+        self.assertEqual(sum(1 for s in a.values() if s == "sanding"), 2)
 
     def test_floater_not_parked_on_a_full_machine(self):
         ops = [Operator("a", "A", "cnc_1536"), Operator("b", "B", "sanding", skills={"cnc_1536"})]
@@ -309,12 +309,12 @@ class EngineTests(unittest.TestCase):
         self.assertGreater(r.cum_completed_m2, 0)
 
     def test_parts_need_one_hour_per_station(self):
-        # Shortest route is Cut & Clash: optimising, cnc_1536, eb_drilling,
-        # despatch = 4 stations, so nothing can complete before hour 3.
+        # Shortest route is Cut & Clash: optimising, cnc_1536, edge_bander,
+        # drilling, despatch = 5 stations, so nothing can complete before hour 4.
         r = Simulator(tiny_roster(), settings(horizon="day", mix_pct={"Melamine": 100.0})).run()
         self.assertEqual(r.trace[0]["cum_completed"], 0.0)
-        self.assertEqual(r.trace[2]["cum_completed"], 0.0)
-        self.assertGreater(r.trace[3]["cum_completed"], 0.0)
+        self.assertEqual(r.trace[3]["cum_completed"], 0.0)
+        self.assertGreater(r.trace[4]["cum_completed"], 0.0)
 
     def test_per_crew_shift_handover(self):
         # Cut & Clash day shift is 8h; Thermo/finishing day shifts are 10h.
@@ -361,7 +361,7 @@ class EngineTests(unittest.TestCase):
     def test_zero_capacity_station_stops_flow_without_crashing(self):
         caps = {sid: cfg.default_station_capacity_m2_per_month(sid) for sid in cfg.STATIONS if sid != "admin"}
         caps["cnc_thermo"] = 0.0
-        caps["eb_drilling"] = 0.0
+        caps["drilling"] = 0.0
         r = Simulator(tiny_roster(), settings(station_capacity_m2_per_month=caps)).run()
         self.assertEqual(r.cum_completed_m2, 0.0)
         self.assertEqual(r.station_utilisation["cnc_thermo"], 0.0)
@@ -486,6 +486,8 @@ class FloorEditorTests(unittest.TestCase):
         by = {(o.home_station, o.shift): [] for o in r.operators}
         for o in r.operators:
             by[(o.home_station, o.shift)].append(o.name)
+        self.assertEqual(len(by[("edge_bander", "day")]), 1)       # Ali
+        self.assertEqual(len(by[("drilling", "day")]), 1)          # Eric
         self.assertEqual(len(by[("cnc_1536", "day")]), 1)          # Nirmal
         self.assertEqual(len(by[("cnc_1536", "aft")]), 1)          # Jerald
         self.assertEqual(len(by[("mb_sander", "day")]), 1)         # Quyen

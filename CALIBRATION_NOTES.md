@@ -35,7 +35,7 @@ it and shows the outcome, including a live animated factory-floor view.
 | Optimising | 57.16 m²/op-hr | **REAL** | 90th-pct daily "Optimisation" scan total ÷ real op-hours (3-month export) |
 | CNC (Thermo) | cut-time model, **4 machines** (1224, C6, Weeke 100, Weeke 480) | machine count **REAL** (shop-floor sheet); cut times ASSUMPTION | S1/S2/S3 min-per-board guesses carried from the old tool |
 | CNC 1536 (Cut & Clash) | cut-time model, 1 machine | ASSUMPTION | same as above |
-| Edge Band/Drilling | 6.5 m²/op-hr | ASSUMPTION | no matching real WorkArea checkpoint in the export |
+| Edge bander / Drilling | 13 m²/op-hr each, one operator each, in series | ASSUMPTION | split into two stations (session 4b) to match the floor; each keeps the old combined station's 13 m²/hr throughput at the real 1+1 staffing. No real checkpoint for either yet |
 | Manual Sanding | 11.52 m²/op-hr | **REAL-derived lower bound** | the combined "Sanding" checkpoint proves ≥8,007 m²/month passes through manual sanding *and* the MB Sander, so manual sanding can do at least that at its 2-person crew (the old 6.5 capped it at ~4,500 m²/month and made it the plant's worst bottleneck - see session 3) |
 | MB Sander | 23.04 m²/op-hr, **one operator** | **REAL** | everything sanded is fed through this one machine, run by one person per shift (shop-floor sheet) - real ~8,007 m²/month ceiling ÷ ideal_ops=1 on reference hours |
 | Cefla Automated Gluing Line | 12.95 m²/op-hr | **REAL** | confirmed capacity 9,000 m²/month (was wrongly split into two stations "Edging" + "Glue" - merged) |
@@ -211,7 +211,9 @@ by machine). What it told us, and what changed:
    23.04 m²/op-hr); a second person can't make the machine faster.
 4. **Manual sanding** is 1 person days (Hai), 2 afternoons (Bao, Jett).
 5. **Edge bander (Ali) and Drill (Eric)** are both days only - no afternoon
-   drill operator on the sheet. Still modelled as one station.
+   drill operator on the sheet. Now two separate stations in series
+   (Optimising → B1536 → Edge bander → Drilling → Dispatch), each at 13
+   m²/op-hr so the pair keeps the old combined throughput [ASSUMPTION].
 6. **Hafele and DIY** sit under Dispatch on the sheet but are box-packed
    lines with their own assigned packers (Ben, Agnes / Dayna, Arona).
    Modelled as two non-flow stations under the finishing crew: staffed and

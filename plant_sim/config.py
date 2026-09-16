@@ -147,9 +147,9 @@ class Station:
 # are now [REAL], calibrated from a 3-month WorkArea scan-checkpoint export
 # (90th-percentile daily total per WorkArea, extrapolated to a month, divided
 # by that station's real current roster op-hours/month) - see the per-station
-# comments below for each one's derivation. cnc_thermo/cnc_1536/eb_drilling
+# comments below for each one's derivation. cnc_thermo/cnc_1536/edge_bander/drilling
 # remain [ASSUMPTION] (the CNC stations use a different, machine-minute-based
-# model - see CNC_SETUP_MIN_PER_BOARD below; eb_drilling has no matching real
+# model - see CNC_SETUP_MIN_PER_BOARD below; edge_bander/drilling have no matching real
 # WorkArea checkpoint at all in the export).
 STATIONS: dict[str, Station] = {
     # [REAL, from 3-month WorkArea scan-checkpoint data, see chat] rate is the
@@ -163,20 +163,28 @@ STATIONS: dict[str, Station] = {
     # well, which would change this rate's true per-class attribution.
     "optimising": Station("optimising", "Optimising (nesting)", Route.CUT_AND_CLASH,
                            ideal_ops=1, capacity_m2_per_op_hour=57.164),
-    "cnc_1536":   Station("cnc_1536", "CNC 1536 (Cut & Clash)", Route.CUT_AND_CLASH,
+    "cnc_1536":   Station("cnc_1536", "CNC B1536 (Cut & Clash)", Route.CUT_AND_CLASH,
                            ideal_ops=1, capacity_m2_per_op_hour=0.0, num_machines=1),
-    "eb_drilling": Station("eb_drilling", "Edge Band / Drilling", Route.CUT_AND_CLASH,
-                            ideal_ops=2, capacity_m2_per_op_hour=6.5,
-                            machines=("Edge bander", "Drill")),
-    # [REAL, shop-floor sheet Sep 2026] four Thermo CNCs - 1224, C6, Weeke 100
-    # (old), Weeke 480 (new) - each with one operator per shift (the Weeke
-    # 480 is covered by a Press operator on both shifts). ideal_ops ==
+    # [ASSUMPTION] Edge banding and drilling are two separate machines on the
+    # real floor (Ali / Eric, both days only), run one after the other. No
+    # real checkpoint data for either: the old combined station did 6.5
+    # m2/op-hr with a 2-person crew, i.e. 13 m2/hr of edge-banded-AND-drilled
+    # work, so each step gets 13 m2/op-hr at ideal_ops=1 to keep that same
+    # overall throughput at the real one-person staffing. Replace with real
+    # cycle times when the WorkArea export gains these checkpoints.
+    "edge_bander": Station("edge_bander", "Edge bander", Route.CUT_AND_CLASH,
+                            ideal_ops=1, capacity_m2_per_op_hour=13.0, num_machines=1, machine_bound=True),
+    "drilling":   Station("drilling", "Drilling", Route.CUT_AND_CLASH,
+                           ideal_ops=1, capacity_m2_per_op_hour=13.0, num_machines=1, machine_bound=True),
+    # [REAL, shop-floor sheet Sep 2026] four Thermo CNCs - Weeke (old), B1224,
+    # Weeke (new), C6 - each with one operator per shift (the new Weeke is
+    # covered by a Press operator on both shifts). ideal_ops ==
     # num_machines on purpose: "ideal staffing" for a bank of CNCs means one
     # operator per machine. Extra people beyond the machine count add
     # nothing (see Station.max_useful_ops).
     "cnc_thermo": Station("cnc_thermo", "CNC (Thermo)", Route.THERMO,
                            ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=4,
-                           machines=("Weeke 100 (old)", "1224", "C6", "Weeke 480 (new)")),
+                           machines=("Weeke (old)", "B1224", "Weeke (new)", "C6")),
     # [REAL-derived lower bound] Manual sanding has no machine limit (several
     # people can sand profiles in parallel), and per the user it is NOT the
     # real constraint - everything gets fed through the single MB Sander
@@ -324,7 +332,7 @@ def default_station_capacity_m2_per_month(station_id: str) -> float:
 #     work - parts don't care which press they go through.
 ROUTE_SEQUENCE = {
     Route.THERMO: ["cnc_thermo", "sanding", "mb_sander", "edging"],
-    Route.CUT_AND_CLASH: ["optimising", "cnc_1536", "eb_drilling"],
+    Route.CUT_AND_CLASH: ["optimising", "cnc_1536", "edge_bander", "drilling"],
 }
 SHARED_TERMINAL_STATION = "despatch"
 PRESS_QUEUE_ID = "press"          # the shared physical buffer both presses draw from
@@ -451,7 +459,8 @@ STATION_CREW: dict[str, str] = {
     "diy": "finishing",
     "optimising": "cutclash",
     "cnc_1536": "cutclash",
-    "eb_drilling": "cutclash",
+    "edge_bander": "cutclash",
+    "drilling": "cutclash",
     "admin": "admin",
 }
 

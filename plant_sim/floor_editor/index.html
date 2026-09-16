@@ -132,7 +132,7 @@ function render(args) {
     const map = document.createElement("div");
     map.className = "map";
     args.floor.forEach(area => {
-      const box = stationBox(area.station, shift.id, staffByKey, area.children || []);
+      const box = stationBox(area.station, shift.id, staffByKey, area.children || [], area.machine || "");
       box.style.left = area.x + "%"; box.style.top = area.y + "%";
       box.style.width = area.w + "%"; box.style.height = area.h + "%";
       map.appendChild(box);
@@ -185,18 +185,33 @@ function wireDropTarget(el, sid, shiftId, machine, st) {
   });
 }
 
-function stationBox(sid, shiftId, staffByKey, children) {
+function stationBox(sid, shiftId, staffByKey, children, machine) {
   const st = ARGS.stations[sid];
-  const people = staffByKey[shiftId + "|" + sid] || [];
+  const everyone = staffByKey[shiftId + "|" + sid] || [];
+  // A box for ONE named machine of a station shows only the people on that
+  // machine, is staffed "ideally" by one person, and drops record the machine.
+  const people = machine ? everyone.filter(p => p.machine === machine) : everyone;
+  const ideal = machine ? 1 : st.ideal_ops;
+  const maxUseful = machine ? 1 : st.max_useful_ops;
   const box = document.createElement("div");
   box.className = "station" + (children.length ? " has-children" : "");
   box.dataset.station = sid; box.dataset.shift = shiftId;
-  const cov = coverageClass(people.length, st.ideal_ops);
-  const capNote = (st.max_useful_ops !== null && people.length > st.max_useful_ops)
-    ? ` (${people.length - st.max_useful_ops} surplus)` : "";
+  const cov = coverageClass(people.length, ideal);
+  const capNote = (maxUseful !== null && people.length > maxUseful)
+    ? ` (${people.length - maxUseful} surplus)` : "";
+  const title = machine ? machine : st.label;
+  const sub = machine ? `<div class="unassigned-label">${st.label}</div>` : "";
   box.innerHTML = `
-    <div class="st-head"><span class="st-icon">${st.icon}</span><span class="st-name">${st.label}</span></div>
-    <div class="st-cover"><span class="cov-dot ${cov}"></span>${people.length} staff / ideal ${st.ideal_ops}${capNote}</div>`;
+    <div class="st-head"><span class="st-icon">${st.icon}</span><span class="st-name">${title}</span></div>
+    ${sub}<div class="st-cover"><span class="cov-dot ${cov}"></span>${people.length} staff / ideal ${ideal}${capNote}</div>`;
+
+  if (machine) {
+    const chips = document.createElement("div"); chips.className = "chips";
+    people.forEach(p => chips.appendChild(makeChip(p, sid, shiftId, st)));
+    box.appendChild(chips);
+    wireDropTarget(box, sid, shiftId, machine, st);
+    return box;
+  }
 
   if (st.machines && st.machines.length) {
     // Named machines: one tile each, people sit in the tile of their machine.
@@ -231,7 +246,7 @@ function stationBox(sid, shiftId, staffByKey, children) {
   if (children.length) {
     // Whole stations drawn inside this one's area (Hafele / DIY inside Dispatch).
     const wrap = document.createElement("div"); wrap.className = "children";
-    children.forEach(cid => wrap.appendChild(stationBox(cid, shiftId, staffByKey, [])));
+    children.forEach(cid => wrap.appendChild(stationBox(cid, shiftId, staffByKey, [], "")));
     box.appendChild(wrap);
   }
   wireDropTarget(box, sid, shiftId, "", st);

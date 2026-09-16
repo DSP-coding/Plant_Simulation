@@ -27,7 +27,8 @@ from plant_sim import config as cfg
 STATION_ICONS = {
     "optimising": "📐",
     "cnc_1536": "🪚",
-    "eb_drilling": "🔩",
+    "edge_bander": "🧷",
+    "drilling": "🔩",
     "cnc_thermo": "🪚",
     "sanding": "🧹",
     "mb_sander": "🌀",

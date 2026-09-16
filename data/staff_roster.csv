@@ -1,17 +1,17 @@
 id,name,home_station,shift,skills,absence_rate_pct,machine,notes
 393,Silivelia Afoa,admin,aft,,3.8,,Admin (not on the shop-floor sheet; kept from the earlier staff sheet)
-201,Nirmal Singh,cnc_1536,day,,3.8,,Shop-floor sheet Sep 2026: CNC 1536 day
-124,Jerard Mendoza,cnc_1536,aft,eb_drilling,3.8,,Shop-floor sheet Sep 2026: CNC 1536 afternoon; Edge bander cover (afternoon)
-395,Jay (Marvin) Baluenit,cnc_thermo,day,cnc_1536;eb_drilling,3.8,1224,Shop-floor sheet Sep 2026: CNC 1224 day. Multi-skilled: can run all CNCs + edge banding
-510,Richard Rico Luis,cnc_thermo,aft,,3.8,1224,Shop-floor sheet Sep 2026: CNC 1224 afternoon
+201,Nirmal Singh,cnc_1536,day,,3.8,,Shop-floor sheet Sep 2026: CNC B1536 day
+124,Jerard Mendoza,cnc_1536,aft,edge_bander,3.8,,Shop-floor sheet Sep 2026: CNC B1536 afternoon; Edge bander cover (afternoon)
+395,Jay (Marvin) Baluenit,cnc_thermo,day,cnc_1536;edge_bander,3.8,B1224,Shop-floor sheet Sep 2026: CNC B1224 day. Multi-skilled: can run all CNCs + edge banding
+510,Richard Rico Luis,cnc_thermo,aft,,3.8,B1224,Shop-floor sheet Sep 2026: CNC B1224 afternoon
 434,Raymond Baniaga,cnc_thermo,day,,3.8,C6,Shop-floor sheet Sep 2026: CNC C6 day
 411,Romal Baldevind,cnc_thermo,aft,,3.8,C6,Shop-floor sheet Sep 2026: CNC C6 afternoon
-104,Mandeep Kler,cnc_thermo,day,,3.8,Weeke 100 (old),Shop-floor sheet Sep 2026: Weeke 100 (old) day
-410,Toupou Lolo,cnc_thermo,aft,,3.8,Weeke 100 (old),Shop-floor sheet Sep 2026: Weeke 100 (old) afternoon
-76,Bang Le,press_2,day,cnc_thermo,3.8,,Shop-floor sheet Sep 2026: Press day; covers Weeke 480 (new) day. Press 1/2 split is a placeholder
-533,Jeremy Mendoza,press_2,aft,cnc_thermo,3.8,,Shop-floor sheet Sep 2026: Press afternoon; covers Weeke 480 (new) afternoon. Press 1/2 split is a placeholder
-384,Faiyaz Ali,eb_drilling,day,,3.8,Edge bander,Shop-floor sheet Sep 2026: Edge bander day
-130,Eric Mabin,eb_drilling,day,,3.8,Drill,Shop-floor sheet Sep 2026: Drill day (sheet shows no afternoon drill operator)
+104,Mandeep Kler,cnc_thermo,day,,3.8,Weeke (old),Shop-floor sheet Sep 2026: Weeke (old) day
+410,Toupou Lolo,cnc_thermo,aft,,3.8,Weeke (old),Shop-floor sheet Sep 2026: Weeke (old) afternoon
+76,Bang Le,press_2,day,cnc_thermo,3.8,,Shop-floor sheet Sep 2026: Press day; covers Weeke (new) day. Press 1/2 split is a placeholder
+533,Jeremy Mendoza,press_2,aft,cnc_thermo,3.8,,Shop-floor sheet Sep 2026: Press afternoon; covers Weeke (new) afternoon. Press 1/2 split is a placeholder
+384,Faiyaz Ali,edge_bander,day,,3.8,,Shop-floor sheet Sep 2026: Edge bander day
+130,Eric Mabin,drilling,day,,3.8,,Shop-floor sheet Sep 2026: Drill day (sheet shows no afternoon drill operator)
 530,Hai Hoang,sanding,day,mb_sander,3.8,,Shop-floor sheet Sep 2026: manual sander day; cross-skilled on MB sander [ASSUMPTION]
 423,Quyen Nguyen,mb_sander,day,sanding,3.8,,Shop-floor sheet Sep 2026: MB sander day (the only day MB operator); cross-skilled on manual sanding [ASSUMPTION]
 373,Bao Sok Keo,sanding,aft,mb_sander,3.8,,Shop-floor sheet Sep 2026: manual sander afternoon; cross-skilled on MB sander [ASSUMPTION]

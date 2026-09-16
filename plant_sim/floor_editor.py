@@ -35,21 +35,29 @@ _floor_editor_component = components.declare_component("plant_floor_editor", pat
 # MB Sander / Cefla / presses across the middle, Dispatch as the tall area
 # on the right with the Hafele and DIY packing benches inside it.
 #
-# Each entry is one drop target. "machines" draws named tiles inside the
-# station (a person's roster "machine" decides which tile they sit in);
-# "children" nests whole stations inside another station's area.
+# Each entry is one drop target. "machine" draws one named machine of a
+# station as its own box (a person's roster "machine" decides which box
+# they sit in; dropping on it records that machine); "children" nests
+# whole stations inside another station's area.
 FLOOR_MAP = [
-    {"station": "cnc_thermo", "x": 1,  "y": 2,  "w": 33, "h": 36},
-    {"station": "cnc_1536",   "x": 16, "y": 42, "w": 11, "h": 24},
-    {"station": "eb_drilling", "x": 1, "y": 70, "w": 24, "h": 28},
-    {"station": "optimising", "x": 28, "y": 70, "w": 12, "h": 28},
-    {"station": "sanding",    "x": 36, "y": 2,  "w": 11, "h": 34},
-    {"station": "mb_sander",  "x": 42, "y": 40, "w": 12, "h": 30},
-    {"station": "admin",      "x": 42, "y": 74, "w": 12, "h": 24},
-    {"station": "edging",     "x": 56, "y": 2,  "w": 13, "h": 34},
-    {"station": "press_2",    "x": 56, "y": 40, "w": 11, "h": 30},
-    {"station": "press_1",    "x": 68, "y": 40, "w": 11, "h": 30},
-    {"station": "despatch",   "x": 81, "y": 2,  "w": 18, "h": 96, "children": ["hafele", "diy"]},
+    # Thermo CNCs - one box per machine, placed as on the plan
+    {"station": "cnc_thermo", "machine": "Weeke (old)", "x": 1,  "y": 2,  "w": 11, "h": 30},
+    {"station": "cnc_thermo", "machine": "B1224",       "x": 13, "y": 2,  "w": 11, "h": 30},
+    {"station": "cnc_thermo", "machine": "Weeke (new)", "x": 25, "y": 2,  "w": 11, "h": 30},
+    {"station": "cnc_1536",   "x": 13, "y": 36, "w": 11, "h": 28},
+    {"station": "cnc_thermo", "machine": "C6",          "x": 25, "y": 36, "w": 11, "h": 28},
+    # Cut & Clash corner
+    {"station": "edge_bander", "x": 1,  "y": 70, "w": 11, "h": 28},
+    {"station": "optimising",  "x": 13, "y": 70, "w": 11, "h": 28},
+    {"station": "drilling",    "x": 25, "y": 70, "w": 11, "h": 28},
+    # finishing line
+    {"station": "sanding",    "x": 38, "y": 2,  "w": 10, "h": 32},
+    {"station": "mb_sander",  "x": 38, "y": 38, "w": 10, "h": 28},
+    {"station": "admin",      "x": 38, "y": 70, "w": 10, "h": 28},
+    {"station": "edging",     "x": 50, "y": 2,  "w": 14, "h": 34},
+    {"station": "press_2",    "x": 50, "y": 40, "w": 11, "h": 30},
+    {"station": "press_1",    "x": 63, "y": 40, "w": 11, "h": 30},
+    {"station": "despatch",   "x": 77, "y": 2,  "w": 22, "h": 96, "children": ["hafele", "diy"]},
 ]
 
 SHIFT_LANES = [
