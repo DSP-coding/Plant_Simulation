@@ -22,21 +22,35 @@
   .lane.day .dot { background:var(--day); }
   .lane.aft .dot { background:var(--aft); }
   .lane-title .hint { font-family:var(--body-font); letter-spacing:0; text-transform:none; color:var(--muted); font-size:11px; margin-left:auto; }
-  .grid { display:grid; grid-template-columns:repeat(6, minmax(118px, 1fr)) minmax(118px, 1fr) minmax(96px, 0.8fr);
-          grid-auto-rows:auto; gap:8px; }
-  .row-label { grid-column:1 / -1; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
-  .station { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:9px 10px 10px; min-height:118px;
-             display:flex; flex-direction:column; transition:border-color .15s, background-color .15s, box-shadow .15s; }
-  .station.empty-slot { visibility:hidden; }
+  /* the map: one canvas per shift lane, boxes placed by percentage like the floor plan */
+  .map { position:relative; width:100%; height:560px; background:
+         repeating-linear-gradient(0deg, transparent 0 39px, rgba(255,255,255,.025) 39px 40px),
+         repeating-linear-gradient(90deg, transparent 0 39px, rgba(255,255,255,.025) 39px 40px);
+         border:1px dashed var(--line); border-radius:6px; }
+  .station { position:absolute; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:8px 9px 9px;
+             display:flex; flex-direction:column; overflow:hidden;
+             transition:border-color .15s, background-color .15s, box-shadow .15s; }
   .station.over-ok { border-color:var(--green); background:#16302A; box-shadow:0 0 0 2px rgba(47,179,122,.3); }
   .station.over-learn { border-color:var(--amber); background:#332B1A; box-shadow:0 0 0 2px rgba(224,168,62,.3); }
+  .station.has-children { background:rgba(26,35,56,.6); }
+  .tiles { display:grid; grid-template-columns:1fr 1fr; gap:5px; flex:1; min-height:0; }
+  .tile { border:1px dashed var(--line); border-radius:5px; padding:4px 5px 5px; display:flex; flex-direction:column; min-height:0;
+          transition:border-color .15s, background-color .15s; }
+  .tile.over-ok { border-color:var(--green); background:#16302A; }
+  .tile.over-learn { border-color:var(--amber); background:#332B1A; }
+  .tile-name { font-family:var(--label-font); font-size:9px; letter-spacing:1.2px; text-transform:uppercase; color:var(--muted);
+               margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile .chips { min-height:18px; }
+  .children { display:flex; flex-direction:column; gap:6px; margin-top:auto; }
+  .children .station { position:static; }
+  .unassigned-label { font-size:9px; color:var(--muted); margin:4px 0 2px; }
   .st-head { display:flex; align-items:baseline; gap:5px; margin-bottom:3px; }
   .st-icon { font-size:14px; }
   .st-name { font-family:var(--heading-font); font-size:13px; font-weight:400; line-height:1.15; color:var(--navy); }
   .st-cover { font-size:10px; color:var(--muted); margin-bottom:7px; display:flex; align-items:center; gap:5px; }
   .cov-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
   .cov-dot.ok { background:var(--ok); } .cov-dot.warn { background:var(--warn); } .cov-dot.bad { background:var(--bad); }
-  .chips { display:flex; flex-direction:column; gap:4px; flex:1; min-height:24px; }
+  .chips { display:flex; flex-direction:column; gap:4px; min-height:24px; overflow-y:auto; }
   .chip { display:flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--line); border-radius:16px;
           padding:3px 8px 3px 3px; cursor:grab; user-select:none; font-size:11px; line-height:1.2; color:var(--navy); }
   .chip:hover { border-color:var(--teal); }
@@ -115,88 +129,117 @@ function render(args) {
     lane.className = "lane " + shift.id;
     lane.innerHTML = `<div class="lane-title"><span class="dot"></span>${shift.label}
       <span class="hint">${shift.hint || ""}</span></div>`;
-    const grid = document.createElement("div");
-    grid.className = "grid";
-    args.rows.forEach((row, ri) => {
-      row.stations.forEach((sid, ci) => {
-        grid.appendChild(stationBox(sid, shift.id, staffByKey, ri + 1, ci + 1));
-      });
-      // pad the shorter row so the shared columns line up on the right
-      for (let ci = row.stations.length; ci < args.columns; ci++) {
-        const pad = document.createElement("div");
-        pad.className = "station empty-slot";
-        pad.style.gridRow = String(ri + 1); pad.style.gridColumn = String(ci + 1);
-        grid.appendChild(pad);
-      }
+    const map = document.createElement("div");
+    map.className = "map";
+    args.floor.forEach(area => {
+      const box = stationBox(area.station, shift.id, staffByKey, area.children || []);
+      box.style.left = area.x + "%"; box.style.top = area.y + "%";
+      box.style.width = area.w + "%"; box.style.height = area.h + "%";
+      map.appendChild(box);
     });
-    args.shared.forEach((sid, i) => {
-      const box = stationBox(sid, shift.id, staffByKey, 1, args.columns + 1 + i);
-      box.style.gridRow = "1 / span " + args.rows.length;   // shared boxes run the full height
-      grid.appendChild(box);
-    });
-    lane.appendChild(grid);
+    lane.appendChild(map);
     root.appendChild(lane);
   });
   setFrameHeight();
 }
 
-function stationBox(sid, shiftId, staffByKey, gridRow, gridCol) {
+function makeChip(p, sid, shiftId, st) {
+  const chip = document.createElement("div");
+  chip.className = "chip";
+  chip.draggable = true;
+  chip.dataset.op = p.id;
+  const skillNames = p.skills.map(s => ARGS.stations[s] ? ARGS.stations[s].label : s);
+  chip.title = `${p.name}\nHome: ${st.label}${p.machine ? " - " + p.machine : ""}, ${shiftId} shift\nAlso skilled: ${skillNames.join(", ") || "-"}\nAbsence rate: ${p.absence}%`;
+  chip.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="nm">${p.name}</span>` +
+    (p.skills.length ? `<span class="sk">+${p.skills.length}</span>` : "");
+  chip.addEventListener("dragstart", e => {
+    dragging = { opId: p.id, fromStation: sid, fromShift: shiftId, fromMachine: p.machine || "", skills: p.skills, name: p.name };
+    chip.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", p.id); } catch (_) {}
+  });
+  chip.addEventListener("dragend", () => { chip.classList.remove("dragging"); dragging = null; clearHighlights(); });
+  return chip;
+}
+
+function wireDropTarget(el, sid, shiftId, machine, st) {
+  el.addEventListener("dragover", e => {
+    if (!dragging) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    clearHighlights();
+    const qualified = dragging.fromStation === sid || dragging.skills.includes(sid);
+    el.classList.toggle("over-ok", qualified);
+    el.classList.toggle("over-learn", !qualified);
+  });
+  el.addEventListener("dragleave", () => { el.classList.remove("over-ok", "over-learn"); });
+  el.addEventListener("drop", e => {
+    e.preventDefault(); e.stopPropagation();
+    if (!dragging) return;
+    const d = dragging;
+    clearHighlights();
+    const sameSpot = d.fromStation === sid && d.fromShift === shiftId && (d.fromMachine || "") === (machine || "");
+    if (sameSpot) return;
+    flash(`${d.name} -> ${st.label}${machine ? " / " + machine : ""}, ${shiftId} shift`);
+    emit({ op_id: d.opId, to_station: sid, to_shift: shiftId, to_machine: machine || "" });
+  });
+}
+
+function stationBox(sid, shiftId, staffByKey, children) {
   const st = ARGS.stations[sid];
   const people = staffByKey[shiftId + "|" + sid] || [];
   const box = document.createElement("div");
-  box.className = "station";
-  box.style.gridRow = String(gridRow); box.style.gridColumn = String(gridCol);
+  box.className = "station" + (children.length ? " has-children" : "");
   box.dataset.station = sid; box.dataset.shift = shiftId;
   const cov = coverageClass(people.length, st.ideal_ops);
   const capNote = (st.max_useful_ops !== null && people.length > st.max_useful_ops)
     ? ` (${people.length - st.max_useful_ops} surplus)` : "";
   box.innerHTML = `
     <div class="st-head"><span class="st-icon">${st.icon}</span><span class="st-name">${st.label}</span></div>
-    <div class="st-cover"><span class="cov-dot ${cov}"></span>${people.length} staff / ideal ${st.ideal_ops}${capNote}</div>
-    <div class="chips"></div>`;
-  const chips = box.querySelector(".chips");
-  people.forEach((p, i) => {
-    const chip = document.createElement("div");
-    chip.className = "chip" + ((st.max_useful_ops !== null && i >= st.max_useful_ops) ? " surplus" : "");
-    chip.draggable = true;
-    chip.dataset.op = p.id;
-    const skillNames = p.skills.map(s => ARGS.stations[s] ? ARGS.stations[s].label : s);
-    chip.title = `${p.name}\nHome: ${st.label}, ${shiftId} shift\nAlso skilled: ${skillNames.join(", ") || "-"}\nAbsence rate: ${p.absence}%`;
-    chip.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="nm">${p.name}</span>` +
-      (p.skills.length ? `<span class="sk">+${p.skills.length}</span>` : "");
-    chip.addEventListener("dragstart", e => {
-      dragging = { opId: p.id, fromStation: sid, fromShift: shiftId, skills: p.skills, name: p.name };
-      chip.classList.add("dragging");
-      e.dataTransfer.effectAllowed = "move";
-      try { e.dataTransfer.setData("text/plain", p.id); } catch (_) {}
-    });
-    chip.addEventListener("dragend", () => { chip.classList.remove("dragging"); dragging = null; clearHighlights(); });
-    chips.appendChild(chip);
-  });
+    <div class="st-cover"><span class="cov-dot ${cov}"></span>${people.length} staff / ideal ${st.ideal_ops}${capNote}</div>`;
 
-  box.addEventListener("dragover", e => {
-    if (!dragging) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const qualified = dragging.fromStation === sid || dragging.skills.includes(sid);
-    box.classList.toggle("over-ok", qualified);
-    box.classList.toggle("over-learn", !qualified);
-  });
-  box.addEventListener("dragleave", () => { box.classList.remove("over-ok", "over-learn"); });
-  box.addEventListener("drop", e => {
-    e.preventDefault();
-    if (!dragging) return;
-    const d = dragging;
-    box.classList.remove("over-ok", "over-learn");
-    if (d.fromStation === sid && d.fromShift === shiftId) return;   // dropped back where they were
-    flash(`${d.name} -> ${st.label}, ${shiftId} shift`);
-    emit({ op_id: d.opId, to_station: sid, to_shift: shiftId });
-  });
+  if (st.machines && st.machines.length) {
+    // Named machines: one tile each, people sit in the tile of their machine.
+    const tiles = document.createElement("div"); tiles.className = "tiles";
+    st.machines.forEach(m => {
+      const tile = document.createElement("div"); tile.className = "tile";
+      tile.innerHTML = `<div class="tile-name" title="${m}">${m}</div><div class="chips"></div>`;
+      const chips = tile.querySelector(".chips");
+      people.filter(p => p.machine === m).forEach(p => chips.appendChild(makeChip(p, sid, shiftId, st)));
+      wireDropTarget(tile, sid, shiftId, m, st);
+      tiles.appendChild(tile);
+    });
+    box.appendChild(tiles);
+    const loose = people.filter(p => !st.machines.includes(p.machine));
+    if (loose.length) {
+      const lbl = document.createElement("div"); lbl.className = "unassigned-label"; lbl.textContent = "not on a specific machine";
+      box.appendChild(lbl);
+      const chips = document.createElement("div"); chips.className = "chips";
+      loose.forEach(p => chips.appendChild(makeChip(p, sid, shiftId, st)));
+      box.appendChild(chips);
+    }
+  } else {
+    const chips = document.createElement("div"); chips.className = "chips";
+    people.forEach((p, i) => {
+      const chip = makeChip(p, sid, shiftId, st);
+      if (st.max_useful_ops !== null && i >= st.max_useful_ops) chip.classList.add("surplus");
+      chips.appendChild(chip);
+    });
+    box.appendChild(chips);
+  }
+
+  if (children.length) {
+    // Whole stations drawn inside this one's area (Hafele / DIY inside Dispatch).
+    const wrap = document.createElement("div"); wrap.className = "children";
+    children.forEach(cid => wrap.appendChild(stationBox(cid, shiftId, staffByKey, [])));
+    box.appendChild(wrap);
+  }
+  wireDropTarget(box, sid, shiftId, "", st);
   return box;
 }
 
 function clearHighlights() {
-  document.querySelectorAll(".station").forEach(b => b.classList.remove("over-ok", "over-learn"));
+  document.querySelectorAll(".station, .tile").forEach(b => b.classList.remove("over-ok", "over-learn"));
 }
 
 let flashTimer = null;

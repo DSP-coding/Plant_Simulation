@@ -20,7 +20,7 @@ from pathlib import Path
 
 from plant_sim.config import DEFAULT_ABSENCE_RATE_PCT, SHIFT_LABELS, STATIONS
 
-ROSTER_COLUMNS = ["id", "name", "home_station", "shift", "skills", "absence_rate_pct", "notes"]
+ROSTER_COLUMNS = ["id", "name", "home_station", "shift", "skills", "absence_rate_pct", "machine", "notes"]
 
 
 class RosterError(ValueError):
@@ -36,6 +36,7 @@ class Operator:
     skills: set[str] = field(default_factory=set)  # station ids they can cover
     shift: str = "day"                   # "day" or "aft" - which shift they're rostered to
     absence_rate_pct: float = DEFAULT_ABSENCE_RATE_PCT  # per-person override
+    machine: str = ""                    # which named machine at home_station they normally run (optional)
     notes: str = ""
 
     def can_work(self, station_id: str) -> bool:
@@ -70,6 +71,9 @@ class Operator:
                 out.append(f"{who}: unknown skill station {s!r}")
         if self.shift not in SHIFT_LABELS:
             out.append(f"{who}: shift must be one of {SHIFT_LABELS}, got {self.shift!r}")
+        if self.machine and self.home_station in STATIONS and self.machine not in STATIONS[self.home_station].machines:
+            valid = ", ".join(STATIONS[self.home_station].machines) or "none"
+            out.append(f"{who}: machine {self.machine!r} is not one of {self.home_station}'s machines ({valid})")
         try:
             rate = float(self.absence_rate_pct)
             if not (0.0 <= rate <= 100.0):
@@ -177,6 +181,7 @@ class Roster:
                     shift=(row.get("shift") or "").strip().lower() or "day",
                     skills=extra_skills,
                     absence_rate_pct=rate,
+                    machine=(row.get("machine") or "").strip(),
                     notes=(row.get("notes") or "").strip(),
                 ))
         roster = cls(operators)
@@ -197,6 +202,6 @@ class Roster:
             for op in self.operators:
                 writer.writerow([
                     op.id, op.name, op.home_station, op.shift,
-                    ";".join(sorted(op.skills - {op.home_station})), op.absence_rate_pct, op.notes,
+                    ";".join(sorted(op.skills - {op.home_station})), op.absence_rate_pct, op.machine, op.notes,
                 ])
         os.replace(tmp, path)

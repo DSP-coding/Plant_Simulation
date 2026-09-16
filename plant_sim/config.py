@@ -126,6 +126,10 @@ class Station:
     # False for manual stations (sanding, packing, drilling...) where an
     # extra pair of hands genuinely adds an extra pair of hands' worth.
     machine_bound: bool = False
+    # Named machines inside the station, for the floor map and the roster's
+    # optional "machine" column (which machine a person normally runs).
+    # Purely descriptive - capacity still comes from num_machines / rates.
+    machines: tuple[str, ...] = ()
 
     @property
     def max_useful_ops(self) -> int | None:
@@ -162,7 +166,8 @@ STATIONS: dict[str, Station] = {
     "cnc_1536":   Station("cnc_1536", "CNC 1536 (Cut & Clash)", Route.CUT_AND_CLASH,
                            ideal_ops=1, capacity_m2_per_op_hour=0.0, num_machines=1),
     "eb_drilling": Station("eb_drilling", "Edge Band / Drilling", Route.CUT_AND_CLASH,
-                            ideal_ops=2, capacity_m2_per_op_hour=6.5),
+                            ideal_ops=2, capacity_m2_per_op_hour=6.5,
+                            machines=("Edge bander", "Drill")),
     # [REAL, shop-floor sheet Sep 2026] four Thermo CNCs - 1224, C6, Weeke 100
     # (old), Weeke 480 (new) - each with one operator per shift (the Weeke
     # 480 is covered by a Press operator on both shifts). ideal_ops ==
@@ -170,7 +175,8 @@ STATIONS: dict[str, Station] = {
     # operator per machine. Extra people beyond the machine count add
     # nothing (see Station.max_useful_ops).
     "cnc_thermo": Station("cnc_thermo", "CNC (Thermo)", Route.THERMO,
-                           ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=4),
+                           ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=4,
+                           machines=("Weeke 100 (old)", "1224", "C6", "Weeke 480 (new)")),
     # [REAL-derived lower bound] Manual sanding has no machine limit (several
     # people can sand profiles in parallel), and per the user it is NOT the
     # real constraint - everything gets fed through the single MB Sander

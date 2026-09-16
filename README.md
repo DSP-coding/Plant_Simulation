@@ -44,10 +44,13 @@ breakdown of which is which today.
   stations, buffers filling and draining, who is on each station) alongside
   the charts, so a bottleneck is something you can watch happen, not just
   a number in a table.
-- Lets you **drag people around the floor**: the Factory Floor tab draws
-  every station as a box with its rostered people as chips, one lane per
-  shift. Drag someone to another station or into the other shift, hit
-  Run, and see what it did to lead time and DIFOT - with undo.
+- Lets you **drag people around the floor**: the Factory Floor tab is a
+  map of the real shop floor (traced from the hand-drawn plan) with every
+  station as a box - individual CNCs and the edge bander / drill as tiles
+  inside their station, Hafele and DIY packing inside Dispatch - and the
+  rostered people as chips, one map per shift. Drag someone to another
+  station, machine or shift, hit Run, and see what it did to lead time
+  and DIFOT - with undo.
 
 ## How it's organized
 
@@ -62,7 +65,7 @@ plant_sim/floor_view.py    The live animated factory-floor visualization (playba
 plant_sim/floor_editor.py  The drag-and-drop floor (Streamlit component wrapper + move rule)
 plant_sim/floor_editor/    ...and its single-file HTML/JS front end (no build step)
 plant_sim/theme.py         Dezignatek brand styling (teal/navy, fonts, wordmark header, footer)
-.streamlit/config.toml     Streamlit theme colours (light, teal primary) - committed on purpose
+.streamlit/config.toml     Streamlit theme colours (dark, teal primary) - committed on purpose
 data/staff_roster.csv      The actual roster - names, skills, shifts, absence rates
 tests/test_plant_sim.py    Regression tests (python -m unittest discover -s tests)
 ```

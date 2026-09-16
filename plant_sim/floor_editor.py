@@ -28,17 +28,29 @@ from plant_sim.staff import Roster
 _COMPONENT_DIR = Path(__file__).parent / "floor_editor"
 _floor_editor_component = components.declare_component("plant_floor_editor", path=str(_COMPONENT_DIR))
 
-# How the floor is laid out: the two production lines as rows, then the
-# stations both lines share (packing) and admin as tall boxes on the right.
-FLOOR_ROWS = [
-    {"label": "Cut & Clash (1536)", "stations": list(cfg.ROUTE_SEQUENCE[cfg.Route.CUT_AND_CLASH])},
-    {"label": "Thermo (Series 1/2/3)",
-     "stations": list(cfg.ROUTE_SEQUENCE[cfg.Route.THERMO]) + list(cfg.PRESS_STATIONS)},
-    # Box-packed product lines that sit under Dispatch on the org sheet but
-    # have their own assigned packers (not part of the m2 flow).
-    {"label": "Box packing (under Despatch)", "stations": ["hafele", "diy"]},
+# How the floor is laid out: a MAP of the real shop floor, traced from the
+# hand-drawn plan (rotated to landscape so the labels read left-to-right).
+# Positions are percentages of the map canvas. Flow runs roughly left to
+# right: the Thermo CNCs and the Cut & Clash corner on the left, sanding /
+# MB Sander / Cefla / presses across the middle, Dispatch as the tall area
+# on the right with the Hafele and DIY packing benches inside it.
+#
+# Each entry is one drop target. "machines" draws named tiles inside the
+# station (a person's roster "machine" decides which tile they sit in);
+# "children" nests whole stations inside another station's area.
+FLOOR_MAP = [
+    {"station": "cnc_thermo", "x": 1,  "y": 2,  "w": 33, "h": 36},
+    {"station": "cnc_1536",   "x": 16, "y": 42, "w": 11, "h": 24},
+    {"station": "eb_drilling", "x": 1, "y": 70, "w": 24, "h": 28},
+    {"station": "optimising", "x": 28, "y": 70, "w": 12, "h": 28},
+    {"station": "sanding",    "x": 36, "y": 2,  "w": 11, "h": 34},
+    {"station": "mb_sander",  "x": 42, "y": 40, "w": 12, "h": 30},
+    {"station": "admin",      "x": 42, "y": 74, "w": 12, "h": 24},
+    {"station": "edging",     "x": 56, "y": 2,  "w": 13, "h": 34},
+    {"station": "press_2",    "x": 56, "y": 40, "w": 11, "h": 30},
+    {"station": "press_1",    "x": 68, "y": 40, "w": 11, "h": 30},
+    {"station": "despatch",   "x": 81, "y": 2,  "w": 18, "h": 96, "children": ["hafele", "diy"]},
 ]
-FLOOR_SHARED = [cfg.SHARED_TERMINAL_STATION, "admin"]
 
 SHIFT_LANES = [
     {"id": "day", "label": "Day shift"},
@@ -75,19 +87,18 @@ def floor_editor(roster: Roster, shift_schedules: dict[str, cfg.ShiftSchedule] |
             "icon": STATION_ICONS.get(sid, "🏢"),
             "ideal_ops": st.ideal_ops,
             "max_useful_ops": st.max_useful_ops,
+            "machines": list(st.machines),
         }
         for sid, st in cfg.STATIONS.items()
     }
     staff = [
         {"id": op.id, "name": op.name, "home": op.home_station, "shift": op.shift,
-         "skills": sorted(op.skills), "absence": op.absence_rate_pct}
+         "machine": op.machine, "skills": sorted(op.skills), "absence": op.absence_rate_pct}
         for op in roster.operators
     ]
     shifts = [dict(lane, hint=_crew_hint(lane["id"], shift_schedules)) for lane in SHIFT_LANES]
-    columns = max(len(r["stations"]) for r in FLOOR_ROWS)
     return _floor_editor_component(
-        rows=FLOOR_ROWS, columns=columns, shared=FLOOR_SHARED, stations=stations,
-        staff=staff, shifts=shifts, key=key, default=None,
+        floor=FLOOR_MAP, stations=stations, staff=staff, shifts=shifts, key=key, default=None,
     )
 
 
@@ -97,20 +108,28 @@ def apply_move(roster: Roster, event: dict) -> str | None:
 
     Rule: dropping someone on a station makes it their home station (their
     previous home is kept as an extra skill - they still know that job);
-    dropping into the other lane changes their shift.
+    dropping onto a named machine tile also records that machine; dropping
+    into the other lane changes their shift.
     """
     op = roster.get(str(event.get("op_id", "")))
     to_station = event.get("to_station")
     to_shift = event.get("to_shift")
+    to_machine = str(event.get("to_machine") or "")
     if op is None or to_station not in cfg.STATIONS or to_shift not in cfg.SHIFT_LABELS:
         return None
+    if to_machine and to_machine not in cfg.STATIONS[to_station].machines:
+        to_machine = ""
     changes = []
     if to_station != op.home_station:
         old_home = op.home_station
         op.skills.add(old_home)
         op.skills.discard(to_station)
         op.home_station = to_station
+        op.machine = ""
         changes.append(f"home {cfg.STATIONS[old_home].label} → {cfg.STATIONS[to_station].label}")
+    if to_machine != op.machine:
+        changes.append(f"machine {op.machine or '-'} → {to_machine or '-'}")
+        op.machine = to_machine
     if to_shift != op.shift:
         changes.append(f"shift {op.shift} → {to_shift}")
         op.shift = to_shift

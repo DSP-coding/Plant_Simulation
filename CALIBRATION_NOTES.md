@@ -230,6 +230,12 @@ DIFOT 88% → 100%, Cut & Clash lead 7.1 → 3.5 days (CNC 1536 100% → 72%),
 Thermo lead 4.7 → 4.4 working days. The tightest stations are now the
 four Thermo CNCs (99%) and manual sanding (97%).
 
+Also from session 4: the roster gained an optional **machine** column
+(which named machine a person normally runs - 1224 / C6 / Weeke 100 /
+Weeke 480, Edge bander / Drill). It's descriptive only: capacity still
+comes from the station's machine count and rates. The floor map uses it
+to seat people on the right tile.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
