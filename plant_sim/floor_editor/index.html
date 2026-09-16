@@ -31,13 +31,13 @@
              display:flex; flex-direction:column; overflow:hidden;
              transition:border-color .15s, background-color .15s, box-shadow .15s; }
   .station.over-ok { border-color:var(--green); background:#16302A; box-shadow:0 0 0 2px rgba(47,179,122,.3); }
-  .station.over-learn { border-color:var(--amber); background:#332B1A; box-shadow:0 0 0 2px rgba(224,168,62,.3); }
+  .station.over-learn { border-color:var(--red); background:#33201F; box-shadow:0 0 0 2px rgba(229,72,77,.3); }
   .station.has-children { background:rgba(26,35,56,.6); }
   .tiles { display:grid; grid-template-columns:1fr 1fr; gap:5px; flex:1; min-height:0; }
   .tile { border:1px dashed var(--line); border-radius:5px; padding:4px 5px 5px; display:flex; flex-direction:column; min-height:0;
           transition:border-color .15s, background-color .15s; }
   .tile.over-ok { border-color:var(--green); background:#16302A; }
-  .tile.over-learn { border-color:var(--amber); background:#332B1A; }
+  .tile.over-learn { border-color:var(--red); background:#33201F; }
   .tile-name { font-family:var(--label-font); font-size:9px; letter-spacing:1.2px; text-transform:uppercase; color:var(--muted);
                margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tile .chips { min-height:18px; }
@@ -72,8 +72,9 @@
 <body>
   <div id="root"></div>
   <div class="footer">
-    <span>Drag a person onto any station, in either shift lane. <b style="color:var(--green)">Green</b> border = already qualified there,
-      <b style="color:var(--amber)">amber</b> = will be set as their new home (their old home is kept as a skill).</span>
+    <span>Drag a person onto a station they're skilled for (home or extra skill), in either shift lane.
+      <b style="color:var(--green)">Green</b> border = allowed, <b style="color:var(--red)">red</b> = not skilled for it
+      (give them the skill on the Staff &amp; Skills tab first). Their old home is kept as a skill.</span>
     <span>Coverage dot: <b style="color:var(--ok)">●</b> at/above ideal crew &nbsp; <b style="color:var(--warn)">●</b> below ideal
       &nbsp; <b style="color:var(--bad)">●</b> nobody &nbsp; dashed chip = more people than the machine can use.</span>
   </div>
@@ -184,6 +185,11 @@ function wireDropTarget(el, sid, shiftId, machine, st) {
     clearHighlights();
     const sameSpot = d.fromStation === sid && d.fromShift === shiftId && (d.fromMachine || "") === (machine || "");
     if (sameSpot) return;
+    const qualified = d.fromStation === sid || d.skills.includes(sid);
+    if (!qualified) {
+      flash(`${d.name} isn't skilled for ${st.label} - add the skill on the Staff & Skills tab first`);
+      return;
+    }
     flash(`${d.name} -> ${st.label}${machine ? " / " + machine : ""}, ${shiftId} shift`);
     emit({ op_id: d.opId, to_station: sid, to_shift: shiftId, to_machine: machine || "" });
   });

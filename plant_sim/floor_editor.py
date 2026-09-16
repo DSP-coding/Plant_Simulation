@@ -115,10 +115,12 @@ def apply_move(roster: Roster, event: dict) -> str | None:
     """Apply one drop event to the roster. Returns a human-readable
     description of what changed, or None if the event was a no-op / invalid.
 
-    Rule: dropping someone on a station makes it their home station (their
-    previous home is kept as an extra skill - they still know that job);
-    dropping onto a named machine tile also records that machine; dropping
-    into the other lane changes their shift.
+    Rule: a person can only be dropped on a station they are qualified for
+    (their home station or one of their extra skills) - new skills are
+    given on the Staff & Skills tab. Dropping someone on a station makes it
+    their home station (their previous home is kept as an extra skill -
+    they still know that job); dropping onto a named machine tile also
+    records that machine; dropping into the other lane changes their shift.
     """
     op = roster.get(str(event.get("op_id", "")))
     to_station = event.get("to_station")
@@ -126,6 +128,8 @@ def apply_move(roster: Roster, event: dict) -> str | None:
     to_machine = str(event.get("to_machine") or "")
     if op is None or to_station not in cfg.STATIONS or to_shift not in cfg.SHIFT_LABELS:
         return None
+    if to_station not in op.all_qualified_stations:
+        return None                      # not skilled for it - the floor refuses the drop too
     if to_machine and to_machine not in cfg.STATIONS[to_station].machines:
         to_machine = ""
     changes = []

@@ -636,6 +636,15 @@ ALLOCATION_PRESSURE_THRESHOLD_M2 = 150.0
 # single very backed-up station can't strip every other station bare.
 ALLOCATION_MAX_REBALANCE_MOVES = 6
 
+# When someone is away, which stations get covered first. [REAL, per the
+# plant] the CNCs, the Cefla line, the presses and manual sanding are the
+# ones a supervisor fills first; the rest follow in this order. A station
+# on this list is never robbed below its ideal crew to cover another; a
+# station NOT on it can lend a person even if that leaves it short (but
+# never empty).
+ALLOCATION_COVER_PRIORITY = ("cnc_thermo", "edging", "press_1", "press_2", "sanding",
+                             "mb_sander", "cnc_1536", "edge_bander", "drilling", "optimising")
+
 
 # Which Thermo CNC is the "special" machine. [REAL, per the plant] C6 is
 # mostly used for special orders and takes the majority of remakes, so the

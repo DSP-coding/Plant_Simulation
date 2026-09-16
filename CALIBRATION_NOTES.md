@@ -257,6 +257,22 @@ Effect at the real roster: remakes and specials are 100% on C6; moving
 Raymond (C6 days) to Press leaves C6 unmanned 130 of 360 running hours
 and lifts the Thermo remake penalty from +0.77 to +0.93 working days.
 
+## Session 4d - covering absences, and the skills constraint
+
+- **Cover pass in the allocator.** Any station short of its ideal crew
+  (someone away, or simply a thin roster) gets a qualified person pulled
+  in, in this order: CNC, Cefla, Press, manual sanding, MB Sander, then
+  the Cut & Clash stations (`cfg.ALLOCATION_COVER_PRIORITY`). Donors come
+  from stations with people to spare; a non-priority station (Dispatch,
+  Hafele, DIY) will lend even if it drops below its own ideal, a priority
+  station won't; no station is ever emptied; nobody is moved anywhere
+  they aren't skilled for. On the real roster with sick leave on, a month
+  shows ~37 cover moves for ~46 absent person-shifts - mostly Dispatch
+  → CNC (Prabh) and Dispatch → Press (Vili Fonua).
+- **Skills constraint on the floor.** A person can only be dropped on a
+  station that is their home or one of their extra skills; other drops
+  are refused (red). New skills are given on the Staff & Skills tab.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working

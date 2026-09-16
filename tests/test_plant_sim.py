@@ -258,6 +258,44 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(a["a"], "cnc_1536")
         self.assertIsNone(a["b"])   # machine already manned - standing beside it helps nobody
 
+    def test_absence_is_covered_from_a_station_with_spare_people(self):
+        # CNC ideal 4, only 3 present; Despatch (ideal 3) has 5 people, one of
+        # whom can run a CNC - they get pulled across.
+        ops = [Operator(f"c{i}", f"C{i}", "cnc_thermo") for i in range(3)]
+        ops += [Operator(f"d{i}", f"D{i}", "despatch", skills={"cnc_thermo"} if i == 0 else set()) for i in range(5)]
+        a = allocate_shift(ops, {"cnc_thermo", "despatch"}, {})
+        self.assertEqual(a["d0"], "cnc_thermo")
+        self.assertEqual(sum(1 for v in a.values() if v == "despatch"), 4)
+
+    def test_cover_never_robs_a_priority_station_below_ideal(self):
+        # Press 1 is exactly at ideal (3) - it must not lend to the CNC gap.
+        ops = [Operator(f"c{i}", f"C{i}", "cnc_thermo") for i in range(3)]
+        ops += [Operator(f"p{i}", f"P{i}", "press_1", skills={"cnc_thermo"}) for i in range(3)]
+        a = allocate_shift(ops, {"cnc_thermo", "press_1"}, {})
+        self.assertEqual(sum(1 for v in a.values() if v == "press_1"), 3)
+        self.assertEqual(sum(1 for v in a.values() if v == "cnc_thermo"), 3)
+
+    def test_non_priority_station_lends_even_below_ideal_but_never_to_zero(self):
+        # Hafele (ideal 2, not a priority station) has 2 people, both able to
+        # run the Cefla; Cefla has 1 of its ideal 2 -> one Hafele person moves.
+        ops = [Operator("e", "E", "edging"),
+               Operator("h1", "H1", "hafele", skills={"edging"}), Operator("h2", "H2", "hafele", skills={"edging"})]
+        a = allocate_shift(ops, {"edging", "hafele"}, {})
+        self.assertEqual(sum(1 for v in a.values() if v == "edging"), 2)
+        self.assertEqual(sum(1 for v in a.values() if v == "hafele"), 1)
+
+    def test_cover_priority_order_cnc_before_sanding(self):
+        # One spare multi-skilled person, gaps at both CNC and sanding: CNC wins.
+        ops = [Operator("c1", "C1", "cnc_thermo"), Operator("s1", "S1", "sanding"),
+               Operator("d1", "D1", "despatch", skills={"cnc_thermo", "sanding"}), Operator("d2", "D2", "despatch")]
+        a = allocate_shift(ops, {"cnc_thermo", "sanding", "despatch"}, {})
+        self.assertEqual(a["d1"], "cnc_thermo")
+
+    def test_cover_only_moves_qualified_people(self):
+        ops = [Operator("c1", "C1", "cnc_thermo")] + [Operator(f"d{i}", f"D{i}", "despatch") for i in range(6)]
+        a = allocate_shift(ops, {"cnc_thermo", "despatch"}, {})
+        self.assertEqual(sum(1 for v in a.values() if v == "cnc_thermo"), 1)   # nobody qualified -> nobody moved
+
     def test_never_strips_a_station_to_zero(self):
         ops = [Operator("a", "A", "sanding", skills={"despatch"}), Operator("b", "B", "despatch")]
         a = allocate_shift(ops, {"sanding", "despatch"}, {"sanding": 0.0, "despatch": 5000.0})
@@ -465,14 +503,19 @@ class FloorEditorTests(unittest.TestCase):
         self.assertIsNone(apply_move(r, {"op_id": "j", "to_station": "sanding", "to_shift": "night"}))
         self.assertEqual(r.get("j").home_station, "cnc_thermo")
 
-    def test_snapshot_restore_undoes_a_move(self):
+    def test_unqualified_drop_is_refused(self):
         r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day", skills={"cnc_1536"})])
+        self.assertIsNone(apply_move(r, {"op_id": "j", "to_station": "sanding", "to_shift": "day"}))
+        self.assertEqual(r.get("j").home_station, "cnc_thermo")
+
+    def test_snapshot_restore_undoes_a_move(self):
+        r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day", skills={"cnc_1536", "sanding"})])
         before = snapshot(r)
         apply_move(r, {"op_id": "j", "to_station": "sanding", "to_shift": "aft"})
         self.assertEqual(r.get("j").home_station, "sanding")
         restore(r, before)
         op = r.get("j")
-        self.assertEqual((op.home_station, op.shift, op.skills), ("cnc_thermo", "day", {"cnc_1536"}))
+        self.assertEqual((op.home_station, op.shift, op.skills), ("cnc_thermo", "day", {"cnc_1536", "sanding"}))
 
     def test_box_packing_lines_are_staffed_but_outside_the_flow(self):
         for sid in ("hafele", "diy", "admin"):

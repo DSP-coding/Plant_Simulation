@@ -13,8 +13,15 @@ optimiser, so you can follow (and tweak) the logic by eye:
               has the biggest backlog per head right now - as long as that
               station can actually use another pair of hands (a one-machine
               CNC with someone already on it can't).
-    Pass 3 - Rebalancing: if some station is still drowning in backlog after
-              Pass 1/2, pull a limited number of multi-skilled people off
+    Pass 3 - Cover: any station running short of its normal crew (someone
+              is away, or the roster is simply thin) gets a qualified person
+              pulled in - CNC, Cefla, Press and manual sanding first (see
+              cfg.ALLOCATION_COVER_PRIORITY). Donors come from stations with
+              people to spare; a non-priority station will lend even if it
+              drops below its own ideal, a priority station won't. Nobody is
+              ever moved somewhere they aren't skilled for.
+    Pass 4 - Rebalancing: if some station is still drowning in backlog after
+              that, pull a limited number of multi-skilled people off
               comfortably-staffed stations to go help, mirroring what a real
               supervisor would do. Surplus people (more bodies than a machine
               can use) are moved first; a station is never stripped to zero;
@@ -33,7 +40,8 @@ machines' people against that one pile (see cfg.queue_id_for).
 from __future__ import annotations
 
 from plant_sim import config as cfg
-from plant_sim.config import ALLOCATION_MAX_REBALANCE_MOVES, ALLOCATION_PRESSURE_THRESHOLD_M2
+from plant_sim.config import (ALLOCATION_COVER_PRIORITY, ALLOCATION_MAX_REBALANCE_MOVES,
+                              ALLOCATION_PRESSURE_THRESHOLD_M2)
 from plant_sim.staff import Operator
 
 
@@ -70,8 +78,11 @@ def allocate_shift(
             continue  # every station they know is already as full as it can usefully be
         assignment[op.id] = _neediest_station(with_room, assignment, queue_m2)
 
-    # --- Pass 3: rebalance floaters toward the most backed-up station --------
+    # --- Pass 3: cover stations that are short of their normal crew ---------
     already_moved: set[str] = set()
+    _cover_gaps(active_stations, by_id, assignment, already_moved)
+
+    # --- Pass 4: rebalance floaters toward the most backed-up station --------
     for _ in range(ALLOCATION_MAX_REBALANCE_MOVES):
         loads = _current_loads(assignment, active_stations)
         pressures = {s: _pressure(s, assignment, queue_m2) for s in active_stations}
@@ -117,6 +128,50 @@ def _has_room(station: str, assignment: dict[str, str | None]) -> bool:
     """Can this station usefully take one more person?"""
     cap = cfg.STATIONS[station].max_useful_ops
     return cap is None or _heads_on_station(station, assignment) < cap
+
+
+def _cover_gaps(active_stations: set[str], by_id: dict[str, Operator],
+                assignment: dict[str, str | None], already_moved: set[str]) -> None:
+    """Fill stations that are below their ideal crew, most important first.
+    Mutates `assignment` and `already_moved` in place."""
+    priority = [s for s in ALLOCATION_COVER_PRIORITY if s in active_stations]
+    others = sorted(s for s in active_stations if s not in ALLOCATION_COVER_PRIORITY)
+    for gap in priority + others:
+        ideal = cfg.STATIONS[gap].ideal_ops
+        while _heads_on_station(gap, assignment) < ideal and _has_room(gap, assignment):
+            donor = _find_cover_donor(gap, by_id, assignment, already_moved)
+            if donor is None:
+                break
+            assignment[donor] = gap
+            already_moved.add(donor)
+
+
+def _find_cover_donor(gap: str, by_id: dict[str, Operator], assignment: dict[str, str | None],
+                      already_moved: set[str]) -> str | None:
+    """The best person to move onto `gap`: qualified for it, not moved yet
+    this shift, and taken from the station that can best spare them.
+
+    Donor stations are ranked by how many people they have beyond their
+    ideal crew (most surplus first). A priority station is never taken
+    below its ideal; a non-priority station may go below ideal but never
+    to zero."""
+    best: tuple[int, int, str] | None = None
+    for op_id, station in assignment.items():
+        if station is None or station == gap or op_id in already_moved:
+            continue
+        if gap not in by_id[op_id].all_qualified_stations:
+            continue
+        heads = _heads_on_station(station, assignment)
+        surplus = heads - cfg.STATIONS[station].ideal_ops
+        if heads <= 1:
+            continue                                   # never empty a station
+        if station in ALLOCATION_COVER_PRIORITY and surplus <= 0:
+            continue                                   # a priority station keeps its crew
+        # rank: most surplus first, then non-priority stations before priority ones
+        key = (surplus, 0 if station in ALLOCATION_COVER_PRIORITY else 1, op_id)
+        if best is None or key > best:
+            best = key
+    return best[2] if best else None
 
 
 def _neediest_station(candidate_stations: list[str], assignment: dict[str, str | None],
