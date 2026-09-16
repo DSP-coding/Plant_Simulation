@@ -45,8 +45,9 @@ _TEMPLATE = r"""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500&family=Nunito+Sans:wght@400;600;700;800&display=swap');
   /* Dezignatek palette - keep in step with plant_sim/theme.py */
-  :root { --teal:#00C3B1; --teal-dark:#00A897; --navy:#171F32; --muted:#6B7280; --panel:#F4F6F8; --line:#E3E7EC;
-          --white:#FFFFFF; --day:#00C3B1; --aft:#E0A83E; --accent:#00C3B1; --red:#E5484D;
+  /* Dark edition: --navy is the TEXT colour name kept for continuity (it's light here), --white is the ground */
+  :root { --teal:#00C3B1; --teal-dark:#00A897; --navy:#EEF1F6; --muted:#9AA5B8; --panel:#171F32; --line:#2A3550;
+          --white:#0E1320; --card:#1A2338; --day:#00C3B1; --aft:#E0A83E; --accent:#00C3B1; --red:#E5484D;
           --heading-font:"Sansation Light","Sansation","Quicksand","Nunito Sans",sans-serif;
           --body-font:"Avenir LT Std Book","Avenir","Nunito Sans","Segoe UI",sans-serif;
           --label-font:"Avenir LT Std Black","Avenir LT Std Heavy","Avenir","Nunito Sans","Segoe UI",sans-serif; }
@@ -54,30 +55,30 @@ _TEMPLATE = r"""
   body { margin:0; background:var(--white); color:var(--navy); font-family:var(--body-font); }
   .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:var(--panel);
               border:1px solid var(--line); border-radius:8px; padding:8px 12px; margin-bottom:10px; }
-  .controls button { background:var(--white); color:var(--teal); border:2px solid var(--teal); border-radius:20px;
+  .controls button { background:transparent; color:var(--teal); border:2px solid var(--teal); border-radius:20px;
                       padding:6px 14px; font-size:11px; font-family:var(--label-font); letter-spacing:1.5px;
                       text-transform:uppercase; cursor:pointer; }
   .controls button.primary { background:var(--teal); color:var(--white); }
   .controls button:hover { background:var(--teal-dark); border-color:var(--teal-dark); color:var(--white); }
   .controls input[type=range] { flex:1; min-width:150px; accent-color:var(--teal); }
-  .controls select { background:var(--white); color:var(--navy); border:1px solid var(--line); border-radius:4px;
+  .controls select { background:var(--card); color:var(--navy); border:1px solid var(--line); border-radius:4px;
                      padding:4px 6px; font-family:var(--body-font); }
   .time-label { font-variant-numeric:tabular-nums; font-size:12px; min-width:140px; color:var(--navy); }
   .row-label { font-family:var(--label-font); font-size:11px; color:var(--navy); text-transform:uppercase;
                letter-spacing:1.9px; margin:10px 0 4px; }
   .floor-row { display:flex; align-items:stretch; gap:4px; overflow-x:auto; padding:4px 2px 10px; }
-  .station-box { flex:0 0 auto; width:132px; background:var(--white); border:1px solid var(--line);
-                 border-radius:6px; padding:9px; position:relative; transition:background-color .3s, opacity .3s;
-                 box-shadow:0 1px 2px rgba(23,31,50,.04); }
+  .station-box { flex:0 0 auto; width:132px; background:var(--card); border:1px solid var(--line);
+                 border-radius:6px; padding:9px; position:relative; transition:background-color .3s, opacity .3s; }
   .station-box.off { opacity:.45; background:var(--panel); }
   .station-icon { font-size:17px; line-height:1; }
   .station-box h4 { margin:3px 0 2px; font-size:12px; font-family:var(--heading-font); font-weight:400; color:var(--navy); }
   .on-dot { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:50%; background:var(--line); }
-  .on-dot.day { background:var(--day); box-shadow:0 0 0 3px rgba(0,195,177,.2); }
-  .on-dot.aft { background:var(--aft); box-shadow:0 0 0 3px rgba(224,168,62,.2); }
+  .on-dot.day { background:var(--day); box-shadow:0 0 6px var(--day); }
+  .on-dot.aft { background:var(--aft); box-shadow:0 0 6px var(--aft); }
   .ops-label { font-size:9.5px; color:var(--muted); margin-top:2px; }
   .names { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; min-height:16px; }
   .name-tag { font-size:8.5px; background:var(--panel); border:1px solid var(--line); border-radius:8px; color:var(--navy);
+              /* --panel is the brand navy here, a step darker than the card */
               padding:1px 6px; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
   .name-tag.more { color:var(--muted); }
   .buf-label { font-family:var(--label-font); font-size:8.5px; letter-spacing:1.2px; text-transform:uppercase;

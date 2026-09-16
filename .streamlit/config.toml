@@ -1,11 +1,11 @@
-# Dezignatek look: white page, teal accent, navy text (matches dezignatek.co.nz).
+# Dezignatek look, dark: deep navy page, brand-navy panels, teal accent, light text.
 # Fine-grained styling (fonts, wordmark header, pill buttons) is in plant_sim/theme.py.
 [theme]
-base = "light"
+base = "dark"
 primaryColor = "#00C3B1"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F6F8"
-textColor = "#171F32"
+backgroundColor = "#0E1320"
+secondaryBackgroundColor = "#171F32"
+textColor = "#EEF1F6"
 font = "sans serif"
 
 [server]

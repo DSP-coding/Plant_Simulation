@@ -6,8 +6,9 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500&family=Nunito+Sans:wght@400;600;700;800&display=swap');
   /* Dezignatek palette - keep in step with plant_sim/theme.py */
-  :root { --teal:#00C3B1; --teal-dark:#00A897; --navy:#171F32; --muted:#6B7280; --panel:#F4F6F8; --line:#E3E7EC;
-          --white:#FFFFFF; --amber:#E0A83E; --red:#E5484D; --green:#2FB37A;
+  /* Dark edition: --navy is the TEXT colour name kept for continuity (it's light here), --white is the card ground */
+  :root { --teal:#00C3B1; --teal-dark:#00A897; --navy:#EEF1F6; --muted:#9AA5B8; --panel:#171F32; --line:#2A3550;
+          --white:#0E1320; --card:#1A2338; --chip:#243050; --amber:#E0A83E; --red:#E5484D; --green:#2FB37A;
           --day:#00C3B1; --aft:#E0A83E; --ok:#2FB37A; --warn:#E0A83E; --bad:#E5484D;
           --heading-font:"Sansation Light","Sansation","Quicksand","Nunito Sans",sans-serif;
           --body-font:"Avenir LT Std Book","Avenir","Nunito Sans","Segoe UI",sans-serif;
@@ -24,13 +25,12 @@
   .grid { display:grid; grid-template-columns:repeat(6, minmax(118px, 1fr)) minmax(118px, 1fr) minmax(96px, 0.8fr);
           grid-template-rows:auto auto; gap:8px; }
   .row-label { grid-column:1 / -1; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
-  .station { background:var(--white); border:1px solid var(--line); border-radius:6px; padding:9px 10px 10px; min-height:118px;
-             display:flex; flex-direction:column; transition:border-color .15s, background-color .15s, box-shadow .15s;
-             box-shadow:0 1px 2px rgba(23,31,50,.04); }
+  .station { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:9px 10px 10px; min-height:118px;
+             display:flex; flex-direction:column; transition:border-color .15s, background-color .15s, box-shadow .15s; }
   .station.span2 { grid-row: span 2; }
   .station.empty-slot { visibility:hidden; }
-  .station.over-ok { border-color:var(--green); background:#EEFBF5; box-shadow:0 0 0 2px rgba(47,179,122,.25); }
-  .station.over-learn { border-color:var(--amber); background:#FFF8EA; box-shadow:0 0 0 2px rgba(224,168,62,.25); }
+  .station.over-ok { border-color:var(--green); background:#16302A; box-shadow:0 0 0 2px rgba(47,179,122,.3); }
+  .station.over-learn { border-color:var(--amber); background:#332B1A; box-shadow:0 0 0 2px rgba(224,168,62,.3); }
   .st-head { display:flex; align-items:baseline; gap:5px; margin-bottom:3px; }
   .st-icon { font-size:14px; }
   .st-name { font-family:var(--heading-font); font-size:13px; font-weight:400; line-height:1.15; color:var(--navy); }
@@ -38,20 +38,20 @@
   .cov-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
   .cov-dot.ok { background:var(--ok); } .cov-dot.warn { background:var(--warn); } .cov-dot.bad { background:var(--bad); }
   .chips { display:flex; flex-direction:column; gap:4px; flex:1; min-height:24px; }
-  .chip { display:flex; align-items:center; gap:6px; background:var(--panel); border:1px solid var(--line); border-radius:16px;
+  .chip { display:flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--line); border-radius:16px;
           padding:3px 8px 3px 3px; cursor:grab; user-select:none; font-size:11px; line-height:1.2; color:var(--navy); }
   .chip:hover { border-color:var(--teal); }
   .chip:active { cursor:grabbing; }
   .chip.dragging { opacity:.4; }
   .chip.surplus { border-style:dashed; opacity:.7; }
-  .avatar { width:20px; height:20px; border-radius:50%; background:var(--teal); color:#fff; font-size:9px; font-family:var(--label-font);
+  .avatar { width:20px; height:20px; border-radius:50%; background:var(--teal); color:#0E1320; font-size:9px; font-family:var(--label-font);
             display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
   .lane.aft .avatar { background:var(--aft); }
   .chip .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chip .sk { font-size:9px; color:var(--teal); font-family:var(--label-font); flex:0 0 auto; }
   .footer { display:flex; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:10.5px; padding:2px 4px; }
   .footer b { color:var(--navy); }
-  .flash { position:fixed; right:12px; bottom:12px; background:var(--navy); color:#fff; border-radius:20px;
+  .flash { position:fixed; right:12px; bottom:12px; background:var(--teal); color:#0E1320; border-radius:20px;
            padding:8px 14px; font-size:11.5px; opacity:0; transition:opacity .25s; pointer-events:none; }
   .flash.show { opacity:1; }
 </style>
