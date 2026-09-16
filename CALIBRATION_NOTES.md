@@ -273,6 +273,18 @@ and lifts the Thermo remake penalty from +0.77 to +0.93 working days.
   station that is their home or one of their extra skills; other drops
   are refused (red). New skills are given on the Staff & Skills tab.
 
+## Session 4e - one operator running two CNCs
+
+Per the plant, one CNC operator often runs two machines at once (typically
+on Series 3, where the machine cuts unattended for a long time). The
+roster gained a `machine_2` column; on the floor, Ctrl-drag a CNC operator
+onto another CNC to have them run both (they stay on their own machine, a
+ghost chip appears on the second, × to stop). Their own machine runs at
+full rate; the second runs at `CNC_SECOND_MACHINE_FACTOR` = 0.8
+[ASSUMPTION - close to 1 for long Series 3 cuts, lower for quick Series 1
+boards]. A real operator on that machine caps it at full rate. Nobody on
+the current roster is set up this way yet - it's there for what-ifs.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -288,6 +300,8 @@ and lifts the Thermo remake penalty from +0.77 to +0.93 working days.
 0b. ~~Cut & Clash DIFOT is 43%~~ **Resolved (session 4)** by the real
    roster: with Nirmal on 1536 days, Cut & Clash runs at 100% DIFOT and
    3.5-day lead time.
+0f. **How fast does a second CNC really run** when one person tends two?
+   Currently 80% of a fully-tended machine, regardless of series.
 0e. **What share of Thermo intake is a special order?** Currently a 10%
    placeholder in the sidebar.
 0d. **Press 1 vs Press 2**: the sheet just says "Press"; the 6 day / 5

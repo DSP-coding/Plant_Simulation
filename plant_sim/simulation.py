@@ -288,8 +288,13 @@ class Simulator:
                  "remake_min_total": 0.0, "remake_min_on_c6": 0.0,
                  "special_min_total": 0.0, "special_min_on_c6": 0.0,
                  "c6_active_hours": 0.0, "c6_unmanned_hours": 0.0}
-        machine_by_op = {op.id: (op.machine if op.home_station == "cnc_thermo" else "")
-                         for op in self.roster.operators}
+        # Which Thermo CNC(s) each person mans when they're on the CNCs: their
+        # own machine at full weight, a second machine (if any) at the
+        # split-attention weight, floaters/cover untagged.
+        machines_by_op = {
+            op.id: ([(op.machine, 1.0)] + ([(op.machine_2, cfg.CNC_SECOND_MACHINE_FACTOR)] if op.machine_2 else [])
+                    if op.home_station == "cnc_thermo" else [("", 1.0)])
+            for op in self.roster.operators}
 
         cum_intake = cum_completed = cum_remade = 0.0
         # Whole-run totals (warm-up included) for the mass-balance self-check.
@@ -376,8 +381,8 @@ class Simulator:
 
             ops_per_station = self._headcount_per_station(allocation_cache, day_index, label_by_station)
             cnc_label = label_by_station["cnc_thermo"]
-            cnc_tags = ([machine_by_op.get(oid, "") for oid, st in
-                         allocation_cache.get((day_index, cnc_label), {}).items() if st == "cnc_thermo"]
+            cnc_tags = ([tag for oid, st in allocation_cache.get((day_index, cnc_label), {}).items()
+                         if st == "cnc_thermo" for tag in machines_by_op.get(oid, [("", 1.0)])]
                         if cnc_label else [])
             c6_minutes, main_minutes = self._cnc_thermo_lanes(cnc_tags)
             if recording and cnc_label:
@@ -666,30 +671,39 @@ class Simulator:
     # -----------------------------------------------------------------
 
     @staticmethod
-    def _cnc_thermo_lanes(machine_tags: list[str]) -> tuple[float, float]:
+    def _cnc_thermo_lanes(machine_tags: list) -> tuple[float, float]:
         """Machine-minutes available this hour on the C6 lane and on the other
-        Thermo CNCs, from the roster machine tags of everyone assigned to
-        cnc_thermo. A person tagged to a machine mans that machine; people
-        with no tag (floaters / cover) fill unmanned production machines
-        first and C6 last - a cover operator is sent to keep production
-        going, not to run specials. Two people tagged to one machine still
-        only man one machine."""
+        Thermo CNCs. `machine_tags` is one (machine, weight) per machine a
+        person is tending: their own machine at weight 1.0, a second machine
+        they also run at cfg.CNC_SECOND_MACHINE_FACTOR, and ("", 1.0) for
+        untagged floaters / cover. A machine's manning is the sum of the
+        weights on it, capped at 1 (two people on one machine don't make it
+        faster - the spare full-weight person moves on to an unmanned
+        production machine first, C6 last). Plain strings are accepted too
+        (weight 1.0)."""
         station = cfg.STATIONS["cnc_thermo"]
         special = cfg.CNC_THERMO_SPECIAL_MACHINE
         machines = list(station.machines)
-        manned = {t for t in machine_tags if t in machines}
-        spare = sum(1 for t in machine_tags if t not in machines)            # untagged floaters / cover
-        spare += sum(max(0, machine_tags.count(m) - 1) for m in manned)      # 2nd person on one machine
+        tags = [(t, 1.0) if isinstance(t, str) else (t[0], float(t[1])) for t in machine_tags]
+        weight = {m: 0.0 for m in machines}
+        spare = 0
+        for m, w in tags:
+            if m not in weight:
+                spare += 1                                   # untagged floater / cover
+            elif weight[m] >= 1.0 and w >= 1.0:
+                spare += 1                                   # 2nd full-time person on one machine
+            else:
+                weight[m] = min(1.0, weight[m] + w)
         fill_order = [m for m in machines if m != special] + [special]
         for m in fill_order:
             if spare <= 0:
                 break
-            if m not in manned:
-                manned.add(m)
+            if weight[m] < 1.0:
+                weight[m] = 1.0
                 spare -= 1
         per_machine = 60.0 * cfg.CNC_UTILISATION
-        c6 = per_machine if special in manned else 0.0
-        main = per_machine * len([m for m in manned if m != special])
+        c6 = per_machine * weight[special]
+        main = per_machine * sum(w for m, w in weight.items() if m != special)
         return c6, main
 
     def _process_hour(self, queues, ops_per_station, op_hour_rate, cnc_min_per_m2,

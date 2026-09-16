@@ -564,6 +564,42 @@ class FloorEditorTests(unittest.TestCase):
         self.assertEqual(f(["", "", "", ""]), (m, 3 * m))            # ...and C6 last
         self.assertEqual(f(["C6", "C6"]), (m, m))                    # 2nd person on C6 runs another machine
         self.assertEqual(f(["C6", "", "", "", "", ""]), (m, 3 * m))  # never more than 4 machines
+        k = cfg.CNC_SECOND_MACHINE_FACTOR
+        self.assertEqual(f([("B1224", 1.0), ("C6", k)]), (m * k, m))       # one person also running C6
+        self.assertEqual(f([("B1224", 1.0), ("Weeke (old)", k)]), (0.0, m + m * k))
+        self.assertEqual(f([("B1224", 1.0), ("C6", k), ("C6", 1.0)]), (m, m))   # a real C6 operator caps it at 1
+
+    def test_second_machine_copy_and_unlink(self):
+        r = Roster([Operator("j", "Jay", "cnc_thermo", shift="day", machine="B1224"),
+                    Operator("r", "Ray", "cnc_thermo", shift="day", machine="C6")])
+        msg = apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day", "to_machine": "C6", "copy": True})
+        self.assertIn("also runs C6", msg)
+        self.assertEqual((r.get("j").machine, r.get("j").machine_2), ("B1224", "C6"))
+        r.validate()
+        # not allowed: onto own machine, another station, another shift, or without a home machine
+        self.assertIsNone(apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day", "to_machine": "B1224", "copy": True}))
+        self.assertIsNone(apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "aft", "to_machine": "C6", "copy": True}))
+        # moving their home machine to the second one collapses the pair
+        apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day", "to_machine": "C6"})
+        self.assertEqual((r.get("j").machine, r.get("j").machine_2), ("C6", ""))
+        apply_move(r, {"op_id": "j", "to_station": "cnc_thermo", "to_shift": "day", "to_machine": "Weeke (old)", "copy": True})
+        self.assertEqual(apply_move(r, {"op_id": "j", "unlink": True}), "Jay: no longer also runs Weeke (old)")
+        self.assertEqual(r.get("j").machine_2, "")
+        bad = Roster([Operator("x", "X", "cnc_thermo", machine="B1224", machine_2="B1224")])
+        with self.assertRaises(RosterError):
+            bad.validate()
+
+    def test_second_machine_adds_capacity_in_a_run(self):
+        base = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.STATIONS if sid not in ("admin", "cnc_thermo")
+                for sh in cfg.SHIFT_LABELS]
+        one = Roster(base + [Operator("j", "J", "cnc_thermo", shift="day", machine="B1224")])
+        two = Roster(base + [Operator("j", "J", "cnc_thermo", shift="day", machine="B1224", machine_2="Weeke (old)")])
+        s1 = Simulator(one, settings(horizon="week", mix_pct={"S3": 100.0}, special_order_pct=0.0)).run()
+        s2 = Simulator(two, settings(horizon="week", mix_pct={"S3": 100.0}, special_order_pct=0.0)).run()
+        # more CNC output with the second machine
+        out1 = sum(t["out"]["cnc_thermo"] for t in s1.trace)
+        out2 = sum(t["out"]["cnc_thermo"] for t in s2.trace)
+        self.assertGreater(out2, out1 * 1.3)
 
     def test_remakes_and_specials_go_to_c6_when_it_is_manned(self):
         base = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.STATIONS if sid not in ("admin", "cnc_thermo")

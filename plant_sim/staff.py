@@ -20,7 +20,7 @@ from pathlib import Path
 
 from plant_sim.config import DEFAULT_ABSENCE_RATE_PCT, SHIFT_LABELS, STATIONS
 
-ROSTER_COLUMNS = ["id", "name", "home_station", "shift", "skills", "absence_rate_pct", "machine", "notes"]
+ROSTER_COLUMNS = ["id", "name", "home_station", "shift", "skills", "absence_rate_pct", "machine", "machine_2", "notes"]
 
 
 class RosterError(ValueError):
@@ -37,6 +37,7 @@ class Operator:
     shift: str = "day"                   # "day" or "aft" - which shift they're rostered to
     absence_rate_pct: float = DEFAULT_ABSENCE_RATE_PCT  # per-person override
     machine: str = ""                    # which named machine at home_station they normally run (optional)
+    machine_2: str = ""                  # a second machine they also run at the same time (CNC operators)
     notes: str = ""
 
     def can_work(self, station_id: str) -> bool:
@@ -71,9 +72,16 @@ class Operator:
                 out.append(f"{who}: unknown skill station {s!r}")
         if self.shift not in SHIFT_LABELS:
             out.append(f"{who}: shift must be one of {SHIFT_LABELS}, got {self.shift!r}")
-        if self.machine and self.home_station in STATIONS and self.machine not in STATIONS[self.home_station].machines:
-            valid = ", ".join(STATIONS[self.home_station].machines) or "none"
-            out.append(f"{who}: machine {self.machine!r} is not one of {self.home_station}'s machines ({valid})")
+        if self.home_station in STATIONS:
+            valid = STATIONS[self.home_station].machines
+            for label_, m in (("machine", self.machine), ("machine_2", self.machine_2)):
+                if m and m not in valid:
+                    out.append(f"{who}: {label_} {m!r} is not one of {self.home_station}'s machines "
+                               f"({', '.join(valid) or 'none'})")
+            if self.machine_2 and self.machine_2 == self.machine:
+                out.append(f"{who}: machine_2 is the same as machine ({self.machine!r})")
+            if self.machine_2 and not self.machine:
+                out.append(f"{who}: machine_2 is set but machine is empty")
         try:
             rate = float(self.absence_rate_pct)
             if not (0.0 <= rate <= 100.0):
@@ -182,6 +190,7 @@ class Roster:
                     skills=extra_skills,
                     absence_rate_pct=rate,
                     machine=(row.get("machine") or "").strip(),
+                    machine_2=(row.get("machine_2") or "").strip(),
                     notes=(row.get("notes") or "").strip(),
                 ))
         roster = cls(operators)
@@ -202,6 +211,7 @@ class Roster:
             for op in self.operators:
                 writer.writerow([
                     op.id, op.name, op.home_station, op.shift,
-                    ";".join(sorted(op.skills - {op.home_station})), op.absence_rate_pct, op.machine, op.notes,
+                    ";".join(sorted(op.skills - {op.home_station})), op.absence_rate_pct, op.machine,
+                    op.machine_2, op.notes,
                 ])
         os.replace(tmp, path)

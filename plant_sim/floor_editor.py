@@ -102,7 +102,8 @@ def floor_editor(roster: Roster, shift_schedules: dict[str, cfg.ShiftSchedule] |
     }
     staff = [
         {"id": op.id, "name": op.name, "home": op.home_station, "shift": op.shift,
-         "machine": op.machine, "skills": sorted(op.skills), "absence": op.absence_rate_pct}
+         "machine": op.machine, "machine_2": op.machine_2, "skills": sorted(op.skills),
+         "absence": op.absence_rate_pct}
         for op in roster.operators
     ]
     shifts = [dict(lane, hint=_crew_hint(lane["id"], shift_schedules)) for lane in SHIFT_LANES]
@@ -123,11 +124,30 @@ def apply_move(roster: Roster, event: dict) -> str | None:
     records that machine; dropping into the other lane changes their shift.
     """
     op = roster.get(str(event.get("op_id", "")))
+    if op is None:
+        return None
+    if event.get("unlink"):
+        # The x on a ghost chip: stop running the second machine.
+        if not op.machine_2:
+            return None
+        gone, op.machine_2 = op.machine_2, ""
+        return f"{op.name}: no longer also runs {gone}"
     to_station = event.get("to_station")
     to_shift = event.get("to_shift")
     to_machine = str(event.get("to_machine") or "")
-    if op is None or to_station not in cfg.STATIONS or to_shift not in cfg.SHIFT_LABELS:
+    if to_station not in cfg.STATIONS or to_shift not in cfg.SHIFT_LABELS:
         return None
+    if event.get("copy"):
+        # Ctrl-drag: ALSO run a second machine, staying on the home machine.
+        # Only within the same station and shift, onto a different machine.
+        if (to_station != op.home_station or to_shift != op.shift or not to_machine
+                or to_machine not in cfg.STATIONS[to_station].machines or not op.machine
+                or to_machine == op.machine):
+            return None
+        if op.machine_2 == to_machine:
+            return None
+        op.machine_2 = to_machine
+        return f"{op.name}: also runs {to_machine} (with {op.machine})"
     if to_station not in op.all_qualified_stations:
         return None                      # not skilled for it - the floor refuses the drop too
     if to_machine and to_machine not in cfg.STATIONS[to_station].machines:
@@ -139,10 +159,13 @@ def apply_move(roster: Roster, event: dict) -> str | None:
         op.skills.discard(to_station)
         op.home_station = to_station
         op.machine = ""
+        op.machine_2 = ""
         changes.append(f"home {cfg.STATIONS[old_home].label} → {cfg.STATIONS[to_station].label}")
     if to_machine != op.machine:
         changes.append(f"machine {op.machine or '-'} → {to_machine or '-'}")
         op.machine = to_machine
+        if op.machine_2 == to_machine or not to_machine:
+            op.machine_2 = ""
     if to_shift != op.shift:
         changes.append(f"shift {op.shift} → {to_shift}")
         op.shift = to_shift

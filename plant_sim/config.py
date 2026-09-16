@@ -654,6 +654,14 @@ ALLOCATION_COVER_PRIORITY = ("cnc_thermo", "edging", "press_1", "press_2", "sand
 # from the roster's "machine" column (see Simulator._cnc_thermo_lanes).
 CNC_THERMO_SPECIAL_MACHINE = "C6"
 
+# [REAL, per the plant] one CNC operator often runs two CNCs at once,
+# especially on Series 3 where the machine cuts unattended for a long time.
+# A person's own machine runs at full rate; their SECOND machine (roster
+# column "machine_2", or Ctrl-drag on the floor) runs at this fraction of a
+# fully-tended machine while they split their attention. [ASSUMPTION] 0.8 -
+# close to 1 for long Series 3 cuts, lower for quick Series 1 boards.
+CNC_SECOND_MACHINE_FACTOR = 0.8
+
 # [ASSUMPTION] share of Thermo intake that is a "special order" (non-standard
 # work routed to C6). No data yet - replace with the real share when known.
 DEFAULT_SPECIAL_ORDER_PCT = 10.0
