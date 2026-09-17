@@ -82,9 +82,9 @@
     <span>Drag a person onto a station they're skilled for (home or extra skill), in either shift lane.
       <b style="color:var(--green)">Green</b> border = allowed, <b style="color:var(--red)">red</b> = not skilled for it
       (give them the skill on the Staff &amp; Skills tab first). Their old home is kept as a skill.</span>
-    <span><b style="color:var(--teal)">Ctrl + drag</b> anyone onto a second station they're skilled for to split them
-      across both (half a person at each; a CNC operator's second CNC runs unattended at a reduced rate instead).
-      Click × on the ghost to undo.</span>
+    <span><b style="color:var(--teal)">Ctrl + drag</b> anyone onto a second station they're skilled for: they stay home but
+      help there whenever its pile builds, in proportion to the work waiting. A CNC operator's second CNC keeps
+      cutting unattended at a reduced rate instead. Click × on the ghost to undo.</span>
     <span>Coverage dot: <b style="color:var(--ok)">●</b> at/above ideal crew &nbsp; <b style="color:var(--warn)">●</b> below ideal
       &nbsp; <b style="color:var(--bad)">●</b> nobody &nbsp; dashed chip = more people than the machine can use.</span>
   </div>
@@ -165,7 +165,7 @@ function makeGhostChip(p, st) {
   const homeLabel = ARGS.stations[p.home].label + (p.machine ? " / " + p.machine : "");
   const secondCnc = p.station_2 === p.home && p.machine_2;
   chip.title = `${p.name} also works here while at ${homeLabel}\n` +
-    (secondCnc ? "(second CNC runs unattended at a reduced rate)" : "(their time is split between the two)");
+    (secondCnc ? "(second CNC runs unattended at a reduced rate)" : "(helps here whenever a pile builds, in proportion to the work waiting)");
   chip.innerHTML = `<span class="avatar">${initials(p.name)}</span><span class="nm">${p.name}</span><span class="also">also</span>`;
   const x = document.createElement("button");
   x.className = "unlink"; x.textContent = "×"; x.title = `${p.name}: back to ${homeLabel} only`;

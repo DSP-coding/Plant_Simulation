@@ -435,7 +435,8 @@ def _people(result: SimulationResult, roster) -> list[dict]:
             # "waiting" would be meaningless. Shown, but not rated.
             rows.append({"Name": op.name, "Home": cfg.STATIONS[op.home_station].label, "Shift": op.shift,
                          "Rostered h": rostered, "Producing h": None, "Waiting h": None,
-                         "Covering h": h["covering"], "Absent h": h["absent"], "Utilisation %": None})
+                         "Covering h": h["covering"], "Helping at 2nd station h": h.get("helping", 0.0),
+                         "Absent h": h["absent"], "Utilisation %": None})
             continue
         rows.append({
             "Name": op.name,
@@ -445,6 +446,7 @@ def _people(result: SimulationResult, roster) -> list[dict]:
             "Producing h": h["producing"],
             "Waiting h": h["waiting"],
             "Covering h": h["covering"],
+            "Helping at 2nd station h": h.get("helping", 0.0),
             "Absent h": h["absent"],
             "Utilisation %": (100.0 * h["producing"] / rostered) if rostered > 0 else 0.0,
         })

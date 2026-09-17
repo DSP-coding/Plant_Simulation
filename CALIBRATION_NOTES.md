@@ -277,9 +277,13 @@ and lifts the Thermo remake penalty from +0.77 to +0.93 working days.
 ## Session 4f - anyone can be split across two stations
 
 Generalised from the CNC case: Ctrl-drag anyone onto a second station
-they're skilled for (same shift) and they work both - half a person at
-each (`SPLIT_STATION_SHARE` = 0.5 [ASSUMPTION]). A CNC operator's second
-Thermo CNC is the exception and keeps the unattended-machine rule below.
+they're skilled for (same shift) and they work both. **Their time goes
+where the work is, hour by hour** (session 5d): once the second station
+has at least `SPLIT_HELP_THRESHOLD_HOURS` (1 h [ASSUMPTION]) of its own
+work waiting, they give it a share of their hour in proportion to the two
+piles; otherwise they stay home. A CNC operator's second Thermo CNC is
+the exception and keeps the unattended-machine rule below. The per-person
+time study shows "helping at 2nd station" hours.
 The split only applies while they're at their home station and the
 second station is running on their shift; if the allocator moves them to
 cover elsewhere they're a whole person there. Roster columns `station_2`

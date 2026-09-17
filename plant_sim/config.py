@@ -694,12 +694,15 @@ CNC_THERMO_SPECIAL_MACHINE = "C6"
 CNC_SECOND_MACHINE_FACTOR = 0.8
 
 # Anyone can be split across TWO stations (roster "station_2", or Ctrl-drag
-# on the floor): they count as this share of a person at the second station
-# and (1 - share) at home. [ASSUMPTION] an even 50/50 split. The one
-# exception is a CNC operator running a second Thermo CNC: the machine cuts
-# unattended, so they stay a full person on their own machine and the
-# second runs at CNC_SECOND_MACHINE_FACTOR (above).
-SPLIT_STATION_SHARE = 0.5
+# on the floor). Their time goes WHERE THE WORK IS, hour by hour: once the
+# second station has at least this many hours of its own work waiting, the
+# person gives it a share of their hour in proportion to the two piles
+# (second / (home + second)); below that they stay home. A big pile at the
+# second station and nothing at home puts them there almost full time. The
+# one exception is a CNC operator running a second Thermo CNC: the machine
+# cuts unattended, so they stay a full person on their own machine and the
+# second runs at CNC_SECOND_MACHINE_FACTOR (above). [ASSUMPTION] the 1 h.
+SPLIT_HELP_THRESHOLD_HOURS = 1.0
 
 # [ASSUMPTION] share of Thermo intake that is a "special order" (non-standard
 # work routed to C6). No data yet - replace with the real share when known.

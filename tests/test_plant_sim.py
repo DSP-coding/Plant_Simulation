@@ -603,11 +603,10 @@ class FloorEditorTests(unittest.TestCase):
         # not skilled / other shift -> refused
         self.assertIsNone(apply_move(r, {"op_id": "d", "to_station": "sanding", "to_shift": "day", "copy": True}))
         self.assertIsNone(apply_move(r, {"op_id": "h", "to_station": "despatch", "to_shift": "aft", "copy": True}))
-        # headcount is fractional at both
+        # nothing waiting at despatch at hour 0 -> Hai is a whole person at home
         res = Simulator(r, settings(horizon="day")).run()
-        share = cfg.SPLIT_STATION_SHARE
-        self.assertAlmostEqual(res.trace[2]["ops"]["sanding"], 1.0 - share)
-        self.assertAlmostEqual(res.trace[2]["ops"]["despatch"], 1.0 + share)
+        self.assertAlmostEqual(res.trace[0]["ops"]["sanding"], 1.0)
+        self.assertAlmostEqual(res.trace[0]["ops"]["despatch"], 1.0)
         self.assertIn("Hai (also)", res.staffing_by_shift["0|day"]["despatch"])
         # unlink -> whole person at home again
         self.assertIn("no longer also at", apply_move(r, {"op_id": "h", "unlink": True}))
@@ -617,15 +616,34 @@ class FloorEditorTests(unittest.TestCase):
         apply_move(r, {"op_id": "h", "to_station": "despatch", "to_shift": "day"})
         self.assertFalse(r.get("h").is_split)
 
-    def test_split_only_applies_while_second_station_is_running(self):
-        # Sanding (thermo crew, 4 days) split with drilling (cutclash, 5 days):
-        # on Friday drilling runs but sanding doesn't -> the allocator floats
-        # them (whole person); on Monday hour 20 sanding is off... simplest
-        # check: at an hour when drilling is closed, the whole person is at sanding.
-        r = Roster([Operator("h", "Hai", "sanding", shift="day", skills={"drilling"}, station_2="drilling")])
-        res = Simulator(r, settings(horizon="day")).run()
-        self.assertAlmostEqual(res.trace[2]["ops"]["sanding"], 1.0 - cfg.SPLIT_STATION_SHARE)   # both open
-        self.assertAlmostEqual(res.trace[9]["ops"]["sanding"], 1.0)   # drilling's 8h day is over, sanding still on
+    def test_split_share_follows_the_piles(self):
+        f = Simulator._split_share
+        self.assertEqual(f(0.0, 0.0), 0.0)
+        self.assertEqual(f(5.0, 0.5), 0.0)                       # below the help threshold: stay home
+        self.assertAlmostEqual(f(0.0, 5.0), 1.0)                 # nothing at home, big pile there: go help
+        self.assertAlmostEqual(f(5.0, 5.0), 0.5)
+        self.assertAlmostEqual(f(9.0, 3.0), 0.25)
+
+    def test_split_person_helps_only_when_the_second_pile_builds(self):
+        # Everyone staffed; the sanding day person also helps despatch. With
+        # 100% S1 there is a steady flow, so despatch's pile builds at some
+        # point and Hai's time moves there in proportion - and back.
+        ops = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.FLOW_STATIONS for sh in cfg.SHIFT_LABELS]
+        for op in ops:
+            if op.id == "sanding_day":
+                op.skills.add("despatch"); op.station_2 = "despatch"
+        res = Simulator(Roster(ops), settings(horizon="week", mix_pct={"S1": 100.0})).run()
+        sanding_day_hours = [t["ops"]["sanding"] for t in res.trace if t["shift"].get("sanding") == "day"]
+        self.assertTrue(all(0.0 <= h <= 1.0 + 1e-9 for h in sanding_day_hours))
+        self.assertTrue(any(h < 1.0 - 1e-6 for h in sanding_day_hours))      # helped at despatch at some point
+        self.assertTrue(any(abs(h - 1.0) < 1e-6 for h in sanding_day_hours))  # and was fully home at others
+        helping = res.person_hours["sanding_day"]["helping"]
+        self.assertGreater(helping, 0.0)
+        self.assertLess(helping, res.person_hours["sanding_day"]["rostered"])
+        # second station on a different shift than the person -> whole person at home
+        r2 = Roster([Operator("h", "Hai", "sanding", shift="day", skills={"drilling"}, station_2="drilling")])
+        res2 = Simulator(r2, settings(horizon="day")).run()
+        self.assertAlmostEqual(res2.trace[9]["ops"]["sanding"], 1.0)   # drilling's 8 h day is over
 
     def test_second_machine_adds_capacity_in_a_run(self):
         base = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.STATIONS if sid not in ("admin", "cnc_thermo")

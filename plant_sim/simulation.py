@@ -325,7 +325,8 @@ class Simulator:
         self._press_running = s.press_batch_start_m2 <= 0     # batch state carries hour to hour
         station_queue_sum = {sid: 0.0 for sid in cfg.STATIONS}
         station_queue_max = {sid: 0.0 for sid in cfg.STATIONS}
-        person_hours = {op.id: {"rostered": 0.0, "producing": 0.0, "waiting": 0.0, "covering": 0.0, "absent": 0.0}
+        person_hours = {op.id: {"rostered": 0.0, "producing": 0.0, "waiting": 0.0, "covering": 0.0, "absent": 0.0,
+                                "helping": 0.0}
                         for op in self.roster.operators}
         cnc_minutes_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
         completed_m2_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
@@ -337,10 +338,6 @@ class Simulator:
         # Which Thermo CNC(s) each person mans when they're on the CNCs: their
         # own machine at full weight, a second machine (if any) at the
         # split-attention weight, floaters/cover untagged.
-        # How each person's time is split when they're working their home
-        # station: [(station, weight, machine)]. A whole person at one place
-        # unless they've been split across two (see cfg.SPLIT_STATION_SHARE).
-        presence_by_op = {op.id: self._presence(op) for op in self.roster.operators}
         ops_by_id = {op.id: op for op in self.roster.operators}
 
         cum_intake = cum_completed = cum_remade = 0.0
@@ -353,6 +350,9 @@ class Simulator:
         # stations (this keeps the S1/S2/S3 relative cut-time ratios intact
         # while calibrating the absolute level to the capacity you typed in).
         op_hour_rate, cnc_min_per_m2 = self._resolve_capacities()
+        # Hours-of-work a queue represents at each station (for splitting a
+        # person's time by where the pile is): m2 per hour at the ideal crew.
+        hours_per_m2 = self._hours_per_m2(op_hour_rate, cnc_min_per_m2)
 
         for h in range(end_hour):
             day_index = h // 24
@@ -428,8 +428,12 @@ class Simulator:
                         })
                     staffing_by_shift[f"{record_day_index}|{label}"] = names_by_station
 
-            ops_per_station, cnc_tags = self._headcount_per_station(
-                allocation_cache, day_index, label_by_station, presence_by_op, ops_by_id)
+            waiting_now = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
+            ops_per_station, cnc_tags, helping_now = self._headcount_per_station(
+                allocation_cache, day_index, label_by_station, ops_by_id, waiting_now, hours_per_m2)
+            if recording:
+                for op_id, share in helping_now.items():
+                    person_hours[op_id]["helping"] += share
             cnc_label = label_by_station["cnc_thermo"]
             c6_minutes, main_minutes = self._cnc_thermo_lanes(cnc_tags)
             if recording and cnc_label:
@@ -438,7 +442,6 @@ class Simulator:
                     lanes["c6_unmanned_hours"] += 1
 
             # -- diagnostics: is anyone there, is there anything to do? --
-            waiting_now = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
             if recording:
                 for sid in active_now:
                     station_active_hours[sid] += 1
@@ -710,32 +713,70 @@ class Simulator:
         return "idle"              # rostered on, but nothing they can do is running
 
     @staticmethod
-    def _presence(op) -> list[tuple[str, float, str]]:
+    def _hours_per_m2(op_hour_rate, cnc_min_per_m2) -> dict[str, float]:
+        """How many hours of a station's work (at its ideal crew) one m2 in
+        its queue represents - used to compare piles between stations."""
+        out = {}
+        for sid, st in cfg.STATIONS.items():
+            if sid in cfg.CNC_STATION_IDS:
+                classes = [c for c, pc in cfg.PRODUCT_CLASSES.items() if pc.route == st.route]
+                share = sum(cfg.DEFAULT_MIX_PCT[c] for c in classes) or 1.0
+                mpm = sum(cfg.DEFAULT_MIX_PCT[c] / share * min(cnc_min_per_m2[sid][c], 1e9) for c in classes)
+                per_hour = min(st.ideal_ops, st.num_machines) * 60.0 * cfg.CNC_UTILISATION / mpm if mpm > 0 else 0.0
+            else:
+                per_hour = st.ideal_ops * op_hour_rate.get(sid, 0.0)
+            out[sid] = 1.0 / per_hour if per_hour > 0 else 0.0
+        return out
+
+    @staticmethod
+    def _split_share(home_hours: float, second_hours: float) -> float:
+        """Share of a split person's hour that goes to their SECOND station,
+        given the hours of work waiting at home and at the second station.
+        Nothing until the second pile is worth helping with; then in
+        proportion to the two piles."""
+        if second_hours < cfg.SPLIT_HELP_THRESHOLD_HOURS:
+            return 0.0
+        total = home_hours + second_hours
+        return second_hours / total if total > 0 else 0.0
+
+    @classmethod
+    def _presence(cls, op, waiting_now=None, hours_per_m2=None) -> list[tuple[str, float, str]]:
         """Where a person's time goes when the allocator has them at their
-        HOME station, as [(station, weight, machine)]. Someone split across
-        two stations is a fraction of a person at each; a CNC operator
-        running a second Thermo CNC stays a whole person on their own
-        machine and the unattended second one runs at a reduced rate."""
+        HOME station, as [(station, weight, machine)]. A whole person at one
+        place, unless they're split across two: then their hour is divided
+        by where the work is (see cfg.SPLIT_HELP_THRESHOLD_HOURS). A CNC
+        operator running a second Thermo CNC stays a whole person on their
+        own machine and the unattended second one runs at a reduced rate."""
         home, second = op.home_station, op.second_station
         if not second:
             return [(home, 1.0, op.machine)]
         if op.runs_second_cnc:
             return [(home, 1.0, op.machine), (home, cfg.CNC_SECOND_MACHINE_FACTOR, op.machine_2)]
-        share = cfg.SPLIT_STATION_SHARE
+        if waiting_now is None or hours_per_m2 is None:
+            return [(home, 1.0, op.machine)]
+        h_home = waiting_now.get(home, 0.0) * hours_per_m2.get(home, 0.0)
+        h_second = waiting_now.get(second, 0.0) * hours_per_m2.get(second, 0.0)
+        share = cls._split_share(h_home, h_second)
+        if share <= 0:
+            return [(home, 1.0, op.machine)]
         return [(home, 1.0 - share, op.machine), (second, share, op.machine_2)]
 
-    @staticmethod
-    def _headcount_per_station(allocation_cache, day_index: int, label_by_station: dict[str, str | None],
-                                presence_by_op, ops_by_id) -> tuple[dict[str, float], list]:
+    @classmethod
+    def _headcount_per_station(cls, allocation_cache, day_index: int, label_by_station: dict[str, str | None],
+                                ops_by_id, waiting_now, hours_per_m2) -> tuple[dict[str, float], list, dict]:
         """How much of a person is on each station THIS hour (people split
-        across two stations count fractionally), read from the snapshot for
-        whichever shift that station's own crew is on. Also returns the
-        (machine, weight) tags for everyone on the Thermo CNCs, for the C6
-        lane logic. A split only applies while the person is at their home
-        station and the second station is running on the same shift; moved
-        by the allocator, they are a whole person wherever they were sent."""
+        across two stations count fractionally, by where the work is), read
+        from the snapshot for whichever shift that station's own crew is on.
+        Also returns the (machine, weight) tags for everyone on the Thermo
+        CNCs (for the C6 lane logic) and {op_id: share} for anyone helping
+        at their second station this hour. A split only applies while the
+        person is at their home station and the second station is running
+        on the same shift; moved by the allocator, they are a whole person
+        wherever they were sent."""
         counts = {sid: 0.0 for sid in cfg.STATIONS}
         cnc_tags: list = []
+        helping: dict[str, float] = {}
+        seen: set[str] = set()
         for sid, label in label_by_station.items():
             if label is None:
                 continue
@@ -746,8 +787,8 @@ class Simulator:
                 if st is None:
                     continue
                 op = ops_by_id[op_id]
-                parts = presence_by_op[op_id] if st == op.home_station else [(st, 1.0, "")]
-                # if the second station isn't running right now, the whole person is at home
+                parts = cls._presence(op, waiting_now, hours_per_m2) if st == op.home_station else [(st, 1.0, "")]
+                # if the second station isn't running on this shift right now, the whole person is at home
                 if len(parts) == 2 and parts[1][0] != parts[0][0] and label_by_station.get(parts[1][0]) != label:
                     parts = [(parts[0][0], 1.0, parts[0][2])]
                 for where, w, machine in parts:
@@ -756,7 +797,10 @@ class Simulator:
                     counts[sid] += w
                     if sid == "cnc_thermo":
                         cnc_tags.append((machine, w))
-        return counts, cnc_tags
+                    if len(parts) == 2 and where == parts[1][0] and where != parts[0][0] and op_id not in seen:
+                        helping[op_id] = w
+                        seen.add(op_id)
+        return counts, cnc_tags, helping
 
     # -----------------------------------------------------------------
     # Capacity
