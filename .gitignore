@@ -5,3 +5,7 @@
 *.csv.tmp
 
 data/backups/
+dist/
+.venv/
+runtime/
+data/app_settings.json

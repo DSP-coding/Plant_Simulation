@@ -21,12 +21,12 @@ unconfirmed whether that's really calendar or working days).
 
 ## Running it
 
-```
-streamlit run app.py
-```
+Double-click `Plant Simulator.bat` (or `streamlit run app.py` from a
+terminal). See the README for the portable no-install build.
 
-Tab 1 (Staff & Skills) edits the roster; Tab 2 (Simulation Results) runs
-it and shows the outcome, including a live animated factory-floor view.
+Tab 1 (Factory Floor) is the drag-and-drop floor; Tab 2 (Staff & Skills)
+edits the roster; Tab 3 (Simulation Results) shows the outcome, including
+a live animated factory-floor view.
 
 ## Data provenance - what's real, what's guessed
 
@@ -391,6 +391,72 @@ running ahead of it. In other words the model does not yet see the Cefla
 as a bottleneck at all (69% utilised), which contradicts the floor's
 experience - see open question 0g.
 
+## Session 6 - the 4pm cut-off and Optimising's morning release (18 Sep 2026)
+
+Two facts from the office, plus a real CNC schedule, replaced the biggest
+remaining guess about time outside the floor:
+
+- **[REAL] Online orders are accepted until 4pm.** `ONLINE_ORDER_CUTOFF_HOUR
+  = 10` (6am day-shift start + 10 h); the day's orders now arrive evenly
+  over hours 0-10 instead of the old 8-hour assumption.
+- **[REAL] Orders are scheduled onto the CNCs by Optimising (Diana) every
+  morning**: the afternoon shift's remakes, the new orders and everything
+  still pending scheduling. Orders no longer drop straight into the CNC
+  queue - they wait in a *pending scheduling* pool (in the lead-time
+  clock, not on the floor) and are released at hour 0 of each weekday
+  when someone is on Optimising. Nobody on Optimising that morning =
+  nothing released, the pool carries over (reported as "mornings nobody
+  scheduled"). A roster with no Optimising-capable person at all is
+  treated as scheduling happening outside the model, with a note.
+- **[REAL] How far ahead she schedules**, from the sample CNC schedule:
+  orders dated Wed 16 Sep were cut on Mon 21 Sep, orders dated Thu 17 Sep
+  on Tue 22 Sep - both released on the **3rd working day** after the
+  order date. `DEFAULT_RELEASE_WORKING_DAYS = {thermo: 3, cutclash: 1}`;
+  the Cut & Clash value is an [ASSUMPTION] (next morning) - editable in
+  the sidebar.
+- **Remakes**: found while Optimising is in (day shift) -> scheduled
+  straight away after the inspect/re-program hold (`DEFAULT_REMAKE_DAYS`
+  lowered 0.32 -> 0.1); found on the afternoon shift or a weekend -> into
+  the pool, released next morning. Remakes still keep their original
+  order date and jump the queues.
+- `pre_prod_days` **1.5 -> 0**: that guess stood in for exactly the
+  scheduling lag that is now simulated. `post_prod_days` (0.5) stays.
+
+Effect on the default month (real roster, median intake): Thermo lead
+time 4.7 -> **5.3 working days** (real 8.66), Cut & Clash 5.2 -> 3.9
+calendar days, DIFOT 100% on both, ~820 m² sitting in the pending pool on
+average. The remaining ~3.3-day Thermo gap is no longer "time before the
+floor" - see open question 0 - and the reality-check row for the remake
+penalty now reads +0.97 vs the real +0.32 (it was +1.06 before; the
+morning-release wait is not the cause).
+
+This also settles old open question 1 ("does Optimising process Thermo
+work?") - yes, she schedules it; the routing question is whether that
+counts as a processing step at Optimising's rate, which the real
+~9,900 m²/month Optimising volume suggests it does. `ROUTE_SEQUENCE` is
+unchanged for now: the release is modelled as a daily event, not as
+Optimising's capacity.
+
+The Results tab has a new **Morning CNC schedule** panel: per day, what
+was released to the Thermo CNCs (regular / specials -> C6 / remakes -> C6)
+and to the 1536, the oldest order in each release, and how many mornings
+went unscheduled.
+
+### Shipping it without a terminal
+
+- `Plant Simulator.bat` - double-click to run. On a source checkout it
+  finds the PC's Python, creates a private `.venv`, installs
+  `requirements.txt` (once, needs internet) and starts the app; on the
+  portable build it uses the bundled runtime. `launch.py` picks a free
+  port, runs Streamlit headless (so it never stops at the first-run
+  "enter your email" console prompt) and opens the browser itself.
+- `tools\Build portable package.bat` builds `dist\PlantSimulator-<date>.zip`
+  (~125 MB): the official python.org embeddable 3.11 runtime with every
+  package installed, plus the app, roster and current settings. Recipients
+  unzip and double-click - nothing to install. Requirements are now
+  upper-bounded (`streamlit<1.51`, `pandas<3`, `altair<6`) so a fresh
+  install gets the versions the tests run against.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -403,6 +469,14 @@ experience - see open question 0g.
    order-processing / scheduling / delivery, raise those; if it's floor
    congestion, the station rates are too generous. Real order-level data
    (order date, release-to-floor date, despatch date) would settle which.
+   **Session 6 update**: the 3-working-day scheduling lag is now
+   simulated (pre_prod_days -> 0) and Thermo reads 5.3 working days. The
+   remaining ~3.3 days is on the floor or after it: the sample schedule
+   shows despatch dates 5-10 working days after the order date, so the
+   *promised* date, not floor congestion, may be what the real average
+   follows (orders are finished to a schedule, not as fast as possible).
+   The despatch-date rule ("order date + n working days by product
+   group?") would let the model judge DIFOT the way the office does.
 0b. ~~Cut & Clash DIFOT is 43%~~ **Resolved (session 4)** by the real
    roster: with Nirmal on 1536 days, Cut & Clash runs at 100% DIFOT and
    3.5-day lead time.
@@ -427,10 +501,11 @@ experience - see open question 0g.
    preset uses the tracker's 7,300. Worth deciding which one the sim
    should be judged against.
 
-1. **Does Optimising process Thermo work too, or just Cut & Clash?** The
-   real Optimising volume (~9,900 m²/month) is nearly as large as total
-   combined intake, not just Cut & Clash's ~19% share. If Thermo also
-   passes through it, `ROUTE_SEQUENCE` in `config.py` needs a change.
+1. ~~Does Optimising process Thermo work too?~~ **Answered (session 6)**:
+   yes - Optimising schedules every order onto the CNCs each morning, now
+   modelled as the daily release. Still open: whether that should also
+   count as a capacity step (Optimising's ~9,900 m²/month checkpoint
+   volume says it touches everything).
 2. ~~CNC 1536 has zero confirmed day-shift staff~~ **Resolved (session 4)**:
    Nirmal runs it on days, Jerald on afternoons.
 3. **Edge Band/Drilling's real rate** - no matching checkpoint existed in

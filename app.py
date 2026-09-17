@@ -244,6 +244,24 @@ with st.sidebar:
                                         "in total - the results tab shows what this setting produces.")
 
     st.divider()
+    st.header("Order scheduling (Optimising)")
+    st.caption(f"Online orders are taken until 4pm (hour {cfg.ONLINE_ORDER_CUTOFF_HOUR:.0f} of the day). Each "
+               "weekday morning Optimising schedules the afternoon shift's remakes, the new orders and anything "
+               "still pending onto the CNCs. An order placed on working day D goes on the schedule on the "
+               "morning of working day D+n. Nobody on Optimising that morning = nothing released.")
+    seed("release_days_thermo", int(cfg.DEFAULT_RELEASE_WORKING_DAYS[cfg.Route.THERMO]))
+    seed("release_days_cutclash", int(cfg.DEFAULT_RELEASE_WORKING_DAYS[cfg.Route.CUT_AND_CLASH]))
+    release_working_days = {
+        cfg.Route.THERMO: st.number_input("Thermo: working days from order to CNC release", 0, 15, step=1,
+                                          key="release_days_thermo",
+                                          help="Read off the real CNC schedule: orders dated Wed 16 Sep were cut "
+                                               "Mon 21 Sep, Thu 17 Sep on Tue 22 Sep - 3 working days."),
+        cfg.Route.CUT_AND_CLASH: st.number_input("Cut & Clash: working days from order to 1536 release", 0, 15, step=1,
+                                                 key="release_days_cutclash",
+                                                 help="Not confirmed - assumed next morning."),
+    }
+
+    st.divider()
     st.header("Buffers & press batching")
     st.caption("The floor keeps WIP in front of the Cefla and the presses on purpose, and runs the presses "
                "in batches once a pile has built. The analysis checks these targets every running hour.")
@@ -310,6 +328,7 @@ def run_simulation() -> None:
             station_capacity_m2_per_month=station_capacity_m2_per_month,
             remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
             special_order_pct=special_order_pct,
+            release_working_days={k: int(v) for k, v in release_working_days.items()},
             sick_enabled=sick_enabled, random_seed=int(seed_value),
             buffer_caps_m2={q: v for q, v in buffer_caps_m2.items() if v > 0},
             buffer_targets_m2={q: v for q, v in buffer_targets_m2.items() if v > 0},
@@ -551,6 +570,52 @@ with tab_results:
                           f"{penalty:+.2f} {unit}" if penalty is not None else "—",
                           help=f"Avg lead of remade work minus non-remade ({rm.remake_share_pct:.1f}% of "
                                "completed m² had been remade).")
+
+        # -- Optimising's morning release onto the CNCs --
+        st.divider()
+        label("Scheduling", teal=True)
+        st.subheader("Morning CNC schedule - what Optimising released each day")
+        st.caption("Each weekday morning Optimising schedules the pending pool onto the CNCs: new orders that have "
+                   "reached their release day, plus remakes from the afternoon shift. Orders wait in the pool "
+                   "(counted in lead time) until then.")
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Scheduling mornings", f"{result.scheduling_mornings}")
+        s2.metric("Mornings nobody scheduled", f"{result.scheduling_mornings_missed}",
+                  help="Weekday mornings with nobody on Optimising - the pool carried over.")
+        s3.metric("Pending scheduling (avg)", f"{result.pending_m2_avg:,.0f} m²",
+                  help="Average m² ordered but not yet released to a CNC.")
+        s4.metric("Pending at end of run", f"{result.pending_m2_end:,.0f} m²")
+        if result.scheduling_mornings_missed:
+            st.warning(f"On {result.scheduling_mornings_missed} morning(s) nobody was on Optimising, so nothing was "
+                       "scheduled onto the CNCs - orders sat in the pool until the next staffed morning.")
+        if result.release_log:
+            weekday_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            rows: dict[int, dict] = {}
+            for e in result.release_log:
+                row = rows.setdefault(e["day"], {"Day": e["day"] + 1, "Weekday": weekday_names[e["day"] % 7],
+                                                 "Thermo CNCs (m²)": 0.0, "of which specials → C6": 0.0,
+                                                 "Thermo remakes → C6": 0.0, "CNC 1536 (m²)": 0.0,
+                                                 "Cut & Clash remakes": 0.0, "Oldest order (days ago)": 0})
+                age = e["day"] - e["order_day"]
+                row["Oldest order (days ago)"] = max(row["Oldest order (days ago)"], age)
+                if e["route"] == cfg.Route.THERMO:
+                    if e["remake"]:
+                        row["Thermo remakes → C6"] += e["qty"]
+                    else:
+                        row["Thermo CNCs (m²)"] += e["qty"]
+                        if e["special"]:
+                            row["of which specials → C6"] += e["qty"]
+                else:
+                    if e["remake"]:
+                        row["Cut & Clash remakes"] += e["qty"]
+                    else:
+                        row["CNC 1536 (m²)"] += e["qty"]
+            sched_df = pd.DataFrame([rows[d] for d in sorted(rows)]).set_index("Day")
+            sched_df["Total released (m²)"] = (sched_df["Thermo CNCs (m²)"] + sched_df["Thermo remakes → C6"]
+                                               + sched_df["CNC 1536 (m²)"] + sched_df["Cut & Clash remakes"])
+            st.dataframe(sched_df.round(1), use_container_width=True, height=min(400, 40 + 35 * len(sched_df)))
+            chart_df = sched_df[["Thermo CNCs (m²)", "Thermo remakes → C6", "CNC 1536 (m²)", "Cut & Clash remakes"]]
+            bar_chart(chart_df, x_title="day", y_title="m² released", height=220)
 
         # -- the C6 lane at the Thermo CNCs --
         lanes = result.cnc_thermo_lanes

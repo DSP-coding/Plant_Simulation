@@ -493,9 +493,36 @@ DEFAULT_SHIFT_SCHEDULES: dict[str, ShiftSchedule] = {
 # (which the engine used to do) put ~29% of every week's orders on the
 # weekend, where they sat and aged before anyone could touch them, which
 # quietly inflated Cut & Clash's calendar-day lead time in particular.
-# [ASSUMPTION] window = the first 8 hours of the day shift (office hours).
+# [REAL] Online orders are accepted until 4pm; anything placed later counts
+# as the next day's. Hour 0 is the 6am day-shift start, so the cut-off is
+# hour 10, and the day's orders are spread evenly over hours 0-10.
+ONLINE_ORDER_CUTOFF_HOUR = 10.0
 INTAKE_WEEKDAYS_ONLY = True
-INTAKE_WINDOW_HOURS = (0.0, 8.0)   # [start, end) hour-of-day
+INTAKE_WINDOW_HOURS = (0.0, ONLINE_ORDER_CUTOFF_HOUR)   # [start, end) hour-of-day
+
+# ---------------------------------------------------------------------------
+# Order scheduling: Optimising's morning release onto the CNCs
+# ---------------------------------------------------------------------------
+# [REAL] Orders don't go straight from the web shop to a CNC. Every morning
+# Optimising (Diana) processes the afternoon shift's remakes, the new orders
+# and everything still pending scheduling, and schedules them onto the
+# CNCs. Until then an order sits in the "pending scheduling" pool - it is
+# in the lead-time clock but not on the floor.
+#
+# How far ahead she schedules is read off the real CNC schedule (Sep 2026
+# sample): orders dated Wed 16 Sep were cut on Mon 21 Sep, orders dated
+# Thu 17 Sep on Tue 22 Sep - both released on the 3rd working day after
+# the order date. That 3-day planning lag was previously hidden inside a
+# 1.5-day "pre-production" guess; it is now simulated, so pre_prod_days
+# defaults to 0.
+#   [REAL]       Thermo: 3 working days
+#   [ASSUMPTION] Cut & Clash: next working morning (Optimising nests it
+#                herself, so it is assumed to go on the 1536 the next day)
+SCHEDULING_STATION = "optimising"
+SCHEDULING_RELEASE_HOUR = 0          # start of the day shift = "in the morning"
+DEFAULT_RELEASE_WORKING_DAYS = {Route.THERMO: 3, Route.CUT_AND_CLASH: 1}
+# Remakes found while Optimising is staffed are scheduled straight away;
+# remakes from the afternoon shift (or a weekend) wait for the next morning.
 
 # How long each horizon runs. "month" is a flat 30 days (not 4.345 weeks)
 # so it always ends on a day boundary and contains a whole number of intake
@@ -751,7 +778,10 @@ REAL_REMAKE_PARTS_RATE_PCT = 7.03
 # the UI reports the simulated remake penalty next to the real 0.32 so you
 # can see whether this default reproduces it.
 DEFAULT_REMAKE_RATE_PCT = 5.0   # [REAL, m2-based] see REAL_REMAKE_WASTE_2026 above
-DEFAULT_REMAKE_DAYS = 0.32
+# Since the morning scheduling release is simulated (afternoon remakes wait
+# for Optimising's next morning), the extra hold is only the inspect /
+# re-program time on a day-shift remake.
+DEFAULT_REMAKE_DAYS = 0.1
 
 
 # ---------------------------------------------------------------------------

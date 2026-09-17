@@ -1,3 +1,6 @@
-# Python 3.9 or newer.
-streamlit>=1.49   # st.dataframe(width="stretch") needs 1.49+
-pandas>=2.0
+# Python 3.9 or newer. Upper bounds keep a fresh install on the versions the
+# app is tested with (Streamlit's chart/dataframe width API and pandas 3.0
+# both changed behaviour); bump them deliberately, then re-run the tests.
+streamlit>=1.49,<1.51   # st.dataframe(width="stretch") needs 1.49+
+pandas>=2.0,<3
+altair>=5,<6

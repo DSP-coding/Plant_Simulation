@@ -55,6 +55,8 @@ breakdown of which is which today.
 ## How it's organized
 
 ```
+Plant Simulator.bat        Double-click to run (no terminal); tools\ has the portable-ZIP builder
+launch.py                  What the .bat runs: free port, Streamlit headless, opens the browser
 app.py                     Streamlit UI - the only file that "wires up" the screen
 plant_sim/config.py        Every constant: stations, rates, shifts, real-data references
 plant_sim/staff.py         Operator/Roster - the people
@@ -129,9 +131,16 @@ questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
 
 - **Hour 0 of every simulated day is the start of the day shift** (think
   6am), and the afternoon shift follows straight on. Day 0 is a Monday.
-- **Orders arrive on weekdays, during office hours** (the first 8 hours
+- **Orders arrive on weekdays until the 4pm online cut-off** (hours 0-10
   of the day shift), spread evenly - the intake total you enter for the
   horizon is exactly what arrives inside the reporting window.
+- **Orders wait for Optimising's morning release.** Every weekday morning
+  Optimising (Diana) schedules the pending pool onto the CNCs: new orders
+  on the 3rd working day after their order date (read off the real CNC
+  schedule), plus the afternoon shift's remakes. If nobody is on
+  Optimising that morning nothing is released. The pool counts in lead
+  time but is not on the floor; the Results tab shows each morning's
+  release as a schedule table.
 - **Horizons**: day = one Monday, week = 7 days, month = 30 days. Every
   run is preceded by a 21-day warm-up so queues start at steady state;
   only the horizon is reported.
@@ -151,6 +160,22 @@ questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
   Cut & Clash is in calendar days until its basis is confirmed.
 
 ## Running it
+
+**No terminal needed:** double-click `Plant Simulator.bat`. On a normal
+checkout it uses the Python installed on the PC (3.9+; the first run
+creates a private `.venv` and installs the packages, which needs internet
+once) and opens the app in your browser. Leave the black window open while
+you use it; close it to stop.
+
+**Giving it to someone else:** double-click `tools\Build portable package.bat`
+once. It builds `dist\PlantSimulator-<date>.zip` (~125 MB) containing a
+bundled Python runtime, every package, the app, the roster and your current
+settings. Send them the ZIP; they unzip it somewhere short (Desktop or
+Documents, not a deeply nested folder) and double-click `Plant Simulator.bat`
+inside - nothing to install, no admin rights, no internet needed after that.
+Their staff and settings changes are saved inside their own unzipped folder.
+
+From a terminal it is still just:
 
 ```
 streamlit run app.py

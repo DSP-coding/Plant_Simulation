@@ -48,7 +48,11 @@ def tiny_roster() -> Roster:
 
 
 def settings(**overrides) -> SimulationSettings:
-    base = dict(horizon="week", warmup_days=0, sick_enabled=False, random_seed=1)
+    # Tests of the floor mechanics run without warm-up and with same-morning
+    # scheduling (release_working_days=0), so an order placed at hour 0 is on
+    # the CNC at hour 0. The scheduling tests set their own release days.
+    base = dict(horizon="week", warmup_days=0, sick_enabled=False, random_seed=1,
+                release_working_days={cfg.Route.THERMO: 0, cfg.Route.CUT_AND_CLASH: 0})
     base.update(overrides)
     return SimulationSettings(**base)
 
@@ -687,6 +691,73 @@ class FloorEditorTests(unittest.TestCase):
         self.assertEqual(r.staffing_by_shift["0|day"]["cnc_1536"], ["Day Op"])
         self.assertEqual(r.staffing_by_shift["0|aft"]["cnc_1536"], ["Aft Op"])
         self.assertEqual(r.trace[0]["day"], 0)
+
+
+class SchedulingTests(unittest.TestCase):
+    """Optimising's morning release: the 4pm order cut-off, the n-working-day
+    scheduling lag, remakes waiting for the next morning, and what happens
+    when nobody is on Optimising."""
+
+    def test_online_orders_arrive_until_4pm(self):
+        # Cut-off at hour 10 (6am start + 10h = 4pm): intake in hour 9, none in hour 10.
+        self.assertEqual(cfg.INTAKE_WINDOW_HOURS, (0.0, 10.0))
+        self.assertTrue(Simulator._is_intake_hour(9))
+        self.assertFalse(Simulator._is_intake_hour(10))
+
+    def test_working_day_after_skips_weekends(self):
+        f = Simulator._working_day_after
+        self.assertEqual(f(2, 3), 7)    # Wed -> Mon (the real schedule: ordered 16 Sep, cut 21 Sep)
+        self.assertEqual(f(3, 3), 8)    # Thu -> Tue (ordered 17 Sep, cut 22 Sep)
+        self.assertEqual(f(4, 1), 7)    # Fri -> Mon
+        self.assertEqual(f(5, 1), 7)    # Sat -> Mon
+        self.assertEqual(f(0, 0), 0)
+
+    def test_orders_reach_the_cnc_on_the_third_working_morning(self):
+        r = Simulator(tiny_roster(), settings(horizon="month", release_working_days=cfg.DEFAULT_RELEASE_WORKING_DAYS)).run()
+        thermo_new = [e for e in r.release_log if e["route"] == cfg.Route.THERMO and not e["remake"]]
+        self.assertTrue(thermo_new)
+        for e in thermo_new:
+            self.assertEqual(Simulator._working_days_elapsed(e["order_day"] * 24, e["day"] * 24), 3.0, e)
+        cc_new = [e for e in r.release_log if e["route"] == cfg.Route.CUT_AND_CLASH and not e["remake"]]
+        for e in cc_new:
+            self.assertEqual(Simulator._working_days_elapsed(e["order_day"] * 24, e["day"] * 24), 1.0, e)
+        # Nothing on the Thermo CNCs for the first three days (no warm-up), then work every weekday morning.
+        self.assertEqual(max(t["buf"]["cnc_thermo"] for t in r.trace if t["day"] < 3), 0.0)
+        self.assertGreater(r.trace[3 * 24]["buf"]["cnc_thermo"], 0.0)
+        self.assertEqual(r.scheduling_mornings, 22)
+        self.assertEqual(r.scheduling_mornings_missed, 0)
+        # The pool is in the lead-time clock and in the mass balance (the engine checks the balance itself).
+        self.assertGreater(r.pending_m2_avg, 0.0)
+        self.assertGreater(r.by_route[cfg.Route.THERMO].overall_avg_lead_days, 3.0)
+
+    def test_remakes_found_on_the_afternoon_shift_wait_for_the_morning(self):
+        r = Simulator(tiny_roster(), settings(horizon="month", remake_rate_pct=20.0, remake_days=0.0,
+                                              release_working_days=cfg.DEFAULT_RELEASE_WORKING_DAYS)).run()
+        remakes = [e for e in r.release_log if e["remake"]]
+        self.assertTrue(remakes)
+        # A morning-released remake was ordered before that day, never on it.
+        for e in remakes:
+            self.assertLess(e["order_day"], e["day"], e)
+        self.assertGreater(r.cum_remade_m2, 0.0)
+
+    def test_nobody_on_optimising_means_nothing_is_scheduled(self):
+        ops = [op for op in tiny_roster().operators if op.id != "optimising_day"]   # only an afternoon planner
+        r = Simulator(Roster(ops), settings(horizon="week", release_working_days=cfg.DEFAULT_RELEASE_WORKING_DAYS)).run()
+        self.assertEqual(r.scheduling_mornings, 5)
+        self.assertEqual(r.scheduling_mornings_missed, 5)
+        self.assertEqual(r.cum_completed_m2, 0.0)
+        self.assertAlmostEqual(r.pending_m2_end, r.cum_intake_m2, places=6)
+        # ...unless the roster has no planner at all: then scheduling is assumed to happen outside the model.
+        none = [op for op in ops if op.home_station != "optimising"]
+        r2 = Simulator(Roster(none), settings(horizon="week", release_working_days=cfg.DEFAULT_RELEASE_WORKING_DAYS)).run()
+        self.assertEqual(r2.scheduling_mornings_missed, 0)
+        self.assertTrue(any("scheduling release" in n for n in r2.notes))
+
+    def test_release_days_are_validated(self):
+        with self.assertRaises(ValueError):
+            settings(release_working_days={cfg.Route.THERMO: -1, cfg.Route.CUT_AND_CLASH: 1})
+        with self.assertRaises(ValueError):
+            settings(release_working_days={cfg.Route.THERMO: 3})
 
 
 class ConstraintsTests(unittest.TestCase):

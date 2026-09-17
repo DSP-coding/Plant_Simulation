@@ -48,8 +48,16 @@ class SimulationSettings:
     # 7 days; Thermo defaults to 10 (edit freely).
     target_lead_days: dict[str, float] = field(
         default_factory=lambda: dict(cfg.DEFAULT_TARGET_LEAD_DAYS))
-    pre_prod_days: float = 1.5
+    # Days added to every lead time outside the simulated floor. Pre-production
+    # (order entry -> CNC release) is now simulated - see release_working_days
+    # - so it defaults to 0; post-production covers despatch -> delivery.
+    pre_prod_days: float = 0.0
     post_prod_days: float = 0.5
+    # Optimising's morning release: an order placed on working day D goes onto
+    # the CNC schedule on the morning of working day D+n. See
+    # cfg.DEFAULT_RELEASE_WORKING_DAYS for where the numbers come from.
+    release_working_days: dict[str, int] = field(
+        default_factory=lambda: dict(cfg.DEFAULT_RELEASE_WORKING_DAYS))
     shift_schedules: dict[str, cfg.ShiftSchedule] = field(
         default_factory=lambda: {k: cfg.ShiftSchedule(**vars(v))
                                   for k, v in cfg.DEFAULT_SHIFT_SCHEDULES.items()})
@@ -120,6 +128,11 @@ class SimulationSettings:
             p.append(f"remake_rate_pct must be 0-100, got {self.remake_rate_pct}")
         if self.remake_days < 0:
             p.append("remake_days cannot be negative")
+        for route in cfg.ROUTE_SEQUENCE:
+            if route not in self.release_working_days:
+                p.append(f"release_working_days is missing route {route!r}")
+            elif int(self.release_working_days[route]) < 0:
+                p.append(f"release_working_days[{route!r}] cannot be negative")
         if not (0 <= self.special_order_pct <= 100):
             p.append(f"special_order_pct must be 0-100, got {self.special_order_pct}")
         for sid, v in self.station_capacity_m2_per_month.items():
@@ -235,6 +248,17 @@ class SimulationResult:
     # utilisation of C6 vs the other machines, how much of the remake /
     # special work actually got cut on C6, and how often C6 was unmanned.
     cnc_thermo_lanes: dict[str, float] = field(default_factory=dict)
+    # Optimising's morning releases inside the reporting window: one row per
+    # batch scheduled onto the CNCs - {"day", "route", "cls", "qty",
+    # "special", "remake", "order_day"} (order_day is relative to day 0 of
+    # the window; negative = ordered during warm-up).
+    release_log: list[dict] = field(default_factory=list)
+    # Weekday mornings on which nobody was on Optimising, so nothing was
+    # scheduled and the pending pool carried over to the next morning.
+    scheduling_mornings_missed: int = 0
+    scheduling_mornings: int = 0
+    pending_m2_end: float = 0.0          # still waiting to be scheduled when the run ended
+    pending_m2_avg: float = 0.0          # average over the window's hours
 
     @property
     def has_completions(self) -> bool:
@@ -298,6 +322,22 @@ class Simulator:
         queues: dict[str, StationQueue] = {qid: StationQueue() for qid in queue_ids}
         # Batches waiting to re-enter the line, as (hour they may re-enter, batch).
         remake_holding: list[tuple[float, Batch]] = []
+        # Orders (and afternoon remakes) waiting for Optimising's morning
+        # release, as (earliest day index they may be scheduled, batch).
+        pending: list[tuple[int, Batch]] = []
+        release_log: list[dict] = []
+        mornings = 0
+        mornings_missed = 0
+        pending_sum = 0.0
+        release_days = {r: int(s.release_working_days[r]) for r in cfg.ROUTE_SEQUENCE}
+        # If nobody on the roster can work the scheduling station at all, the
+        # release is treated as happening outside the model (every weekday
+        # morning) rather than never - a roster with no Optimising person is
+        # a valid what-if, and it shouldn't stall the whole plant.
+        scheduler_on_roster = any(op.can_work(cfg.SCHEDULING_STATION) for op in self.roster.operators)
+        if not scheduler_on_roster:
+            notes.append(f"Nobody on the roster can work {cfg.STATIONS[cfg.SCHEDULING_STATION].label}, so "
+                         "the morning scheduling release is assumed to happen regardless.")
 
         # Per-day absence draw, decided once per calendar day and reused for
         # every hour of that day.
@@ -387,10 +427,13 @@ class Simulator:
                         # Thermo intake is split into special orders (routed to
                         # C6) and regular work; Cut & Clash has no such split.
                         special = qty * s.special_order_pct / 100.0 if route == cfg.Route.THERMO else 0.0
+                        # New orders wait in the pending pool until Optimising's
+                        # morning release (see cfg.DEFAULT_RELEASE_WORKING_DAYS).
+                        release_day = self._working_day_after(day_index, release_days[route])
                         if qty - special > EPS_M2:
-                            queues[entry].add(Batch(h, qty - special, cls))
+                            pending.append((release_day, Batch(h, qty - special, cls)))
                         if special > EPS_M2:
-                            queues[entry].add(Batch(h, special, cls, is_special=True))
+                            pending.append((release_day, Batch(h, special, cls, is_special=True)))
                         intake_all += qty
                         if recording:
                             cum_intake += qty
@@ -434,6 +477,33 @@ class Simulator:
             if recording:
                 for op_id, share in helping_now.items():
                     person_hours[op_id]["helping"] += share
+
+            # -- Optimising's morning release: schedule pending work onto the CNCs --
+            scheduler_here = ops_per_station.get(cfg.SCHEDULING_STATION, 0.0) > 0 or not scheduler_on_roster
+            if weekday < 5 and hour_of_day == cfg.SCHEDULING_RELEASE_HOUR:
+                if recording:
+                    mornings += 1
+                if scheduler_here:
+                    still_pending = []
+                    for release_day, b in pending:
+                        if release_day <= day_index:
+                            entry = cfg.ROUTE_ENTRY_STATION[cfg.PRODUCT_CLASSES[b.product_class].route]
+                            queues[entry].add(b)
+                            if recording:
+                                release_log.append({
+                                    "day": record_day_index,
+                                    "route": cfg.PRODUCT_CLASSES[b.product_class].route,
+                                    "cls": b.product_class, "qty": b.qty,
+                                    "special": b.is_special, "remake": b.is_remake,
+                                    "order_day": int(b.created_hour // 24) - warmup_days,
+                                })
+                        else:
+                            still_pending.append((release_day, b))
+                    pending = still_pending
+                elif recording:
+                    mornings_missed += 1
+            if recording:
+                pending_sum += sum(b.qty for _, b in pending)
             cnc_label = label_by_station["cnc_thermo"]
             c6_minutes, main_minutes = self._cnc_thermo_lanes(cnc_tags)
             if recording and cnc_label:
@@ -515,7 +585,14 @@ class Simulator:
                 if bad_qty > EPS_M2:
                     remake = Batch(batch.created_hour, bad_qty, batch.product_class,
                                    is_remake=True, is_special=batch.is_special)
-                    remake_holding.append((h + s.remake_days * 24.0, remake))
+                    if scheduler_here and weekday < 5:
+                        # Found while Optimising is in: scheduled straight away
+                        # (after the inspect / re-program hold).
+                        remake_holding.append((h + s.remake_days * 24.0, remake))
+                    else:
+                        # Afternoon-shift or weekend remake: waits for the next
+                        # morning's release.
+                        pending.append((self._working_day_after(day_index, 1), remake))
                     if recording:
                         cum_remade += bad_qty
 
@@ -534,11 +611,13 @@ class Simulator:
                     "active": sorted(active_now),
                     "shift": label_by_station,
                     "remake_held": sum(b.qty for _, b in remake_holding),
+                    "pending": sum(b.qty for _, b in pending),
                     "cum_intake": cum_intake, "cum_completed": cum_completed, "cum_remade": cum_remade,
                 })
 
         # -- mass balance: nothing is ever created or lost inside the engine --
-        wip = sum(q.total_m2() for q in queues.values()) + sum(b.qty for _, b in remake_holding)
+        wip = (sum(q.total_m2() for q in queues.values()) + sum(b.qty for _, b in remake_holding)
+               + sum(b.qty for _, b in pending))
         imbalance = intake_all - (completed_all + wip)
         if abs(imbalance) > 1e-6 * max(1.0, intake_all):
             raise RuntimeError(f"Simulation mass balance broken: intake {intake_all:.6f} != "
@@ -549,7 +628,7 @@ class Simulator:
         # then pooled together for the headline KPIs.
         daily_stats = self._daily_stats(completed_log, s.target_lead_days)
         overall_avg_lead, overall_difot = self._lead_and_difot(completed_log, s.target_lead_days)
-        overdue_backlog = self._overdue_backlog(queues, remake_holding, s.target_lead_days, end_hour)
+        overdue_backlog = self._overdue_backlog(queues, remake_holding + pending, s.target_lead_days, end_hour)
 
         # Per-route breakdown - same calculations, filtered to one route at a
         # time, so Thermo and Cut & Clash each get their own DIFOT/lead-time
@@ -558,7 +637,7 @@ class Simulator:
         for route, label in ROUTE_LABELS.items():
             route_log = [e for e in completed_log if e["route"] == route]
             r_avg_lead, r_difot = self._lead_and_difot(route_log, s.target_lead_days)
-            r_overdue = self._overdue_backlog(queues, remake_holding, s.target_lead_days, end_hour,
+            r_overdue = self._overdue_backlog(queues, remake_holding + pending, s.target_lead_days, end_hour,
                                               route_filter=route)
             remakes = [e for e in route_log if e["remake"]]
             firsts = [e for e in route_log if not e["remake"]]
@@ -614,6 +693,11 @@ class Simulator:
                 station_cap_sum, station_staffed_hours, station_out_sum, cnc_minutes_by_class),
             station_out_m2=dict(station_out_sum),
             person_hours=person_hours,
+            release_log=release_log,
+            scheduling_mornings=mornings,
+            scheduling_mornings_missed=mornings_missed,
+            pending_m2_end=sum(b.qty for _, b in pending),
+            pending_m2_avg=pending_sum / max(1, end_hour - warmup_hours),
             cnc_thermo_lanes={
                 "c6_utilisation": lanes["c6_used"] / lanes["c6_cap"] if lanes["c6_cap"] > 0 else 0.0,
                 "main_utilisation": lanes["main_used"] / lanes["main_cap"] if lanes["main_cap"] > 0 else 0.0,
@@ -659,6 +743,18 @@ class Simulator:
         weeks = math.floor(t / 168.0)
         remainder = t - weeks * 168.0
         return weeks * 120.0 + min(remainder, 120.0)
+
+    @staticmethod
+    def _working_day_after(day_index: int, n: int) -> int:
+        """The day index of the n-th working day (Mon-Fri) after day_index.
+        n=0 returns day_index itself, even on a weekend - the release loop
+        only fires on weekday mornings, so it is picked up on the next one."""
+        d = day_index
+        for _ in range(max(0, n)):
+            d += 1
+            while d % 7 >= 5:
+                d += 1
+        return d
 
     @classmethod
     def _working_days_elapsed(cls, start_hour: float, end_hour: float) -> float:
@@ -1117,8 +1213,9 @@ class Simulator:
 
     def _overdue_backlog(self, queues, remake_holding, target_lookup: dict[str, float],
                          now_hour: float, route_filter: str | None = None) -> float:
-        """m2 still inside the factory (queues + remake loop) that would
-        already miss its target even if it were finished this instant."""
+        """m2 still inside the factory (queues + remake loop + pending
+        scheduling) that would already miss its target even if it were
+        finished this instant."""
         s = self.settings
         overdue = 0.0
         in_factory = [b for q in queues.values() for b in q.batches] + [b for _, b in remake_holding]
