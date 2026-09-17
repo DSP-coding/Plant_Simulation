@@ -72,6 +72,13 @@ class SimulationSettings:
                                   for sid in cfg.FLOW_STATIONS})
     warmup_days: int = cfg.SIMULATION_WARMUP_DAYS
     buffer_cap_m2: float = cfg.DEFAULT_BUFFER_CAP_M2
+    # Per-queue WIP limits in m2 (queue id -> cap); anything not listed uses
+    # buffer_cap_m2. 0 or less means unlimited. See cfg.BUFFER_CAP_M2_BY_STATION.
+    buffer_caps_m2: dict[str, float] = field(default_factory=lambda: dict(cfg.BUFFER_CAP_M2_BY_STATION))
+
+    def buffer_cap_for(self, queue_id: str) -> float:
+        cap = self.buffer_caps_m2.get(queue_id, self.buffer_cap_m2)
+        return cap if cap and cap > 0 else math.inf
 
     def __post_init__(self):
         if self.intake_m2_for_horizon is None and self.horizon in cfg.REAL_INTAKE_M2:
@@ -117,6 +124,9 @@ class SimulationSettings:
             p.append("warmup_days cannot be negative")
         if self.buffer_cap_m2 <= 0:
             p.append("buffer_cap_m2 must be positive")
+        for qid in self.buffer_caps_m2:
+            if qid not in cfg.STATIONS and qid != cfg.PRESS_QUEUE_ID:
+                p.append(f"buffer_caps_m2 has unknown queue {qid!r}")
         if p:
             raise ValueError("SimulationSettings problems:\n  - " + "\n  - ".join(p))
 
@@ -191,6 +201,17 @@ class SimulationResult:
     station_unstaffed_hours: dict[str, float]  # running, work waiting, but nobody on it
     station_starved_hours: dict[str, float]    # running and staffed, but nothing to do
     intake_hours_in_window: int
+    # More per-station diagnostics for the constraints analysis (reporting window):
+    station_staffed_hours: dict[str, float] = field(default_factory=dict)   # running with someone on it
+    station_busy_hours: dict[str, float] = field(default_factory=dict)      # staffed AND had work at the start of the hour
+    station_flat_out_hours: dict[str, float] = field(default_factory=dict)  # staffed and could not clear its queue (capacity-limited)
+    station_blocked_hours: dict[str, float] = field(default_factory=dict)   # output limited by a full downstream buffer
+    station_queue_avg_m2: dict[str, float] = field(default_factory=dict)    # average m2 waiting (over running hours)
+    station_queue_max_m2: dict[str, float] = field(default_factory=dict)
+    station_capacity_m2_per_hour: dict[str, float] = field(default_factory=dict)  # average while staffed (CNCs converted from minutes)
+    station_out_m2: dict[str, float] = field(default_factory=dict)          # m2 processed in the window
+    # Per-person time study: id -> {"rostered", "producing", "waiting", "covering", "absent"} hours
+    person_hours: dict[str, dict[str, float]] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)   # anything the engine wants the reader to know
     # Who was on which station, per reporting day and shift: "day|label" ->
     # {station_id: [operator names]} - drives the names in the floor playback.
@@ -281,6 +302,14 @@ class Simulator:
         station_active_hours = {sid: 0.0 for sid in cfg.STATIONS}
         station_unstaffed_hours = {sid: 0.0 for sid in cfg.STATIONS}
         station_starved_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_staffed_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_busy_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_flat_out_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_blocked_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_queue_sum = {sid: 0.0 for sid in cfg.STATIONS}
+        station_queue_max = {sid: 0.0 for sid in cfg.STATIONS}
+        person_hours = {op.id: {"rostered": 0.0, "producing": 0.0, "waiting": 0.0, "covering": 0.0, "absent": 0.0}
+                        for op in self.roster.operators}
         cnc_minutes_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
         completed_m2_by_class = {c: 0.0 for c in cfg.PRODUCT_CLASSES}
         # C6-lane bookkeeping (machine-minutes, reporting window only)
@@ -392,18 +421,54 @@ class Simulator:
                     lanes["c6_unmanned_hours"] += 1
 
             # -- diagnostics: is anyone there, is there anything to do? --
+            waiting_now = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
             if recording:
                 for sid in active_now:
                     station_active_hours[sid] += 1
-                    waiting = queues[cfg.queue_id_for(sid)].total_m2()
+                    waiting = waiting_now[sid]
+                    station_queue_sum[sid] += waiting
+                    station_queue_max[sid] = max(station_queue_max[sid], waiting)
+                    if ops_per_station[sid] > 0:
+                        station_staffed_hours[sid] += 1
                     if ops_per_station[sid] == 0 and waiting > EPS_M2:
                         station_unstaffed_hours[sid] += 1
                     elif ops_per_station[sid] > 0 and waiting <= EPS_M2:
                         station_starved_hours[sid] += 1
 
+            blocked_now: set[str] = set()
+            util_now: dict[str, float] = {}
             hour_out = self._process_hour(queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
                                           cnc_minutes_by_class, station_out_sum, station_cap_sum,
-                                          (c6_minutes, main_minutes), lanes if recording else None)
+                                          (c6_minutes, main_minutes), lanes if recording else None,
+                                          blocked_now, util_now)
+            if recording:
+                for sid in active_now:
+                    if ops_per_station[sid] <= 0:
+                        continue
+                    u = util_now.get(sid, 0.0)
+                    station_busy_hours[sid] += u                # productive share of the staffed hour
+                    if sid in blocked_now:
+                        station_blocked_hours[sid] += 1
+                    elif u >= 0.98:
+                        station_flat_out_hours[sid] += 1        # capacity-limited this hour
+                # per-person time study: producing = their station's productive
+                # share of the hour, waiting = the rest.
+                for op in self.roster.operators:
+                    home_label = label_by_station.get(op.home_station)
+                    if op.id in absent_ids:
+                        if home_label == op.shift:
+                            person_hours[op.id]["absent"] += 1
+                        continue
+                    st = allocation_cache.get((day_index, op.shift), {}).get(op.id)
+                    if st is None or label_by_station.get(st) != op.shift:
+                        continue                                # not on the floor this hour
+                    ph = person_hours[op.id]
+                    u = util_now.get(st, 0.0)
+                    ph["rostered"] += 1
+                    ph["producing"] += u
+                    ph["waiting"] += 1.0 - u
+                    if st != op.home_station:
+                        ph["covering"] += 1
 
             # -- packing/despatch output -> completed or remade --
             for batch in hour_out.get(cfg.SHARED_TERMINAL_STATION, []):
@@ -514,6 +579,17 @@ class Simulator:
             intake_hours_in_window=intake_hours_in_window,
             notes=notes,
             staffing_by_shift=staffing_by_shift,
+            station_staffed_hours=station_staffed_hours,
+            station_busy_hours=station_busy_hours,
+            station_flat_out_hours=station_flat_out_hours,
+            station_blocked_hours=station_blocked_hours,
+            station_queue_avg_m2={sid: (station_queue_sum[sid] / station_active_hours[sid]
+                                        if station_active_hours[sid] > 0 else 0.0) for sid in cfg.STATIONS},
+            station_queue_max_m2=station_queue_max,
+            station_capacity_m2_per_hour=self._capacity_m2_per_hour(
+                station_cap_sum, station_staffed_hours, station_out_sum, cnc_minutes_by_class),
+            station_out_m2=dict(station_out_sum),
+            person_hours=person_hours,
             cnc_thermo_lanes={
                 "c6_utilisation": lanes["c6_used"] / lanes["c6_cap"] if lanes["c6_cap"] > 0 else 0.0,
                 "main_utilisation": lanes["main_used"] / lanes["main_cap"] if lanes["main_cap"] > 0 else 0.0,
@@ -694,6 +770,33 @@ class Simulator:
         return op_hour_rate, cnc_min_per_m2
 
     @staticmethod
+    def _capacity_m2_per_hour(station_cap_sum, station_staffed_hours, station_out_sum,
+                              cnc_minutes_by_class) -> dict[str, float]:
+        """Average capacity while staffed, in m2/hour, for every station. CNC
+        capacity is tracked in machine-minutes, so it is converted with the
+        average minutes-per-m2 of what that CNC actually cut (or the default
+        mix if it cut nothing)."""
+        out = {}
+        for sid, station in cfg.STATIONS.items():
+            staffed = station_staffed_hours.get(sid, 0.0)
+            if staffed <= 0:
+                out[sid] = 0.0
+                continue
+            if sid in cfg.CNC_STATION_IDS:
+                classes = [c for c, pc in cfg.PRODUCT_CLASSES.items() if pc.route == station.route]
+                minutes_used = sum(cnc_minutes_by_class[c] for c in classes)
+                m2_out = station_out_sum.get(sid, 0.0)
+                if m2_out > 0 and minutes_used > 0:
+                    min_per_m2 = minutes_used / m2_out
+                else:
+                    share = sum(cfg.DEFAULT_MIX_PCT[c] for c in classes) or 1.0
+                    min_per_m2 = sum(cfg.DEFAULT_MIX_PCT[c] / share * cfg.cnc_min_per_m2(c) for c in classes) or 1.0
+                out[sid] = (station_cap_sum[sid] / staffed) / min_per_m2
+            else:
+                out[sid] = station_cap_sum[sid] / staffed
+        return out
+
+    @staticmethod
     def _flat_capacity_m2_per_hour(station: cfg.Station, ops: int, rate_m2_per_op_hour: float) -> float:
         if ops <= 0:
             return 0.0
@@ -747,7 +850,8 @@ class Simulator:
 
     def _process_hour(self, queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
                        cnc_minutes_by_class, station_out_sum, station_cap_sum,
-                       thermo_lanes=(0.0, 0.0), lane_stats=None) -> dict[str, list[Batch]]:
+                       thermo_lanes=(0.0, 0.0), lane_stats=None, blocked_now=None,
+                       util_now=None) -> dict[str, list[Batch]]:
         """Run one simulated hour of production through every station, in
         cfg.PROCESSING_ORDER (downstream first), and return
         {station_id: [output batches]}.
@@ -763,8 +867,9 @@ class Simulator:
             ops = ops_per_station[sid]
             queue = queues[cfg.queue_id_for(sid)]
             next_qid = cfg.downstream_queue_for(sid)
-            room = queues[next_qid].headroom(self.settings.buffer_cap_m2) if next_qid else math.inf
+            room = queues[next_qid].headroom(self.settings.buffer_cap_for(next_qid)) if next_qid else math.inf
 
+            cap_before = station_cap_sum[sid]
             if sid == "cnc_thermo":
                 produced = self._run_thermo_cncs(queue, room, cnc_min_per_m2[sid], thermo_lanes,
                                                  cnc_minutes_by_class, station_cap_sum, lane_stats)
@@ -777,13 +882,49 @@ class Simulator:
                 produced = queue.consume_cnc(available_minutes, room, cnc_min_per_m2[sid])
                 for b in produced:
                     cnc_minutes_by_class[b.product_class] += b.qty * cnc_min_per_m2[sid][b.product_class]
+            elif sid in cfg.PRESS_STATIONS:
+                # The two presses share one pile and share the work in
+                # proportion to their capacity this hour (processing one
+                # "first" would let it hog the pile and make the other look
+                # idle). Both are handled when the first is reached.
+                if sid != cfg.PRESS_STATIONS[0]:
+                    continue
+                caps = {p: self._flat_capacity_m2_per_hour(cfg.STATIONS[p], ops_per_station[p], op_hour_rate[p])
+                        for p in cfg.PRESS_STATIONS}
+                total_cap = sum(caps.values())
+                for p, c in caps.items():
+                    station_cap_sum[p] += c
+                pulled = queue.consume_flat_rate(min(total_cap, room)) if total_cap > EPS_M2 else []
+                made_all = sum(b.qty for b in pulled)
+                for p, c in caps.items():
+                    share = c / total_cap if total_cap > EPS_M2 else 0.0
+                    out[p] = [b.slice(b.qty * share) for b in pulled] if share > 0 else []
+                    station_out_sum[p] += made_all * share
+                    if util_now is not None:
+                        util_now[p] = min(1.0, made_all * share / c) if c > EPS_M2 else 0.0
+                if blocked_now is not None and room < math.inf and made_all >= room - EPS_M2 and queue.total_m2() > EPS_M2:
+                    blocked_now.update(p for p, c in caps.items() if c > EPS_M2)
+                for b in pulled:
+                    queues[next_qid].add(b)
+                continue
             else:
                 capacity = self._flat_capacity_m2_per_hour(station, ops, op_hour_rate[sid])
                 station_cap_sum[sid] += capacity
                 produced = queue.consume_flat_rate(min(capacity, room))
 
             out[sid] = produced
-            station_out_sum[sid] += sum(b.qty for b in produced)
+            made = sum(b.qty for b in produced)
+            station_out_sum[sid] += made
+            if util_now is not None:
+                # share of this hour's capacity actually used (minutes for CNCs, m2 otherwise)
+                cap_this_hour = station_cap_sum[sid] - cap_before
+                used = (sum(b.qty * cnc_min_per_m2[sid][b.product_class] for b in produced)
+                        if sid in cfg.CNC_STATION_IDS else made)
+                util_now[sid] = min(1.0, used / cap_this_hour) if cap_this_hour > EPS_M2 else 0.0
+            # Blocked = downstream space, not capacity or work, limited the output.
+            if blocked_now is not None and next_qid is not None and room < math.inf \
+                    and made >= room - EPS_M2 and queue.total_m2() > EPS_M2:
+                blocked_now.add(sid)
             if next_qid is not None:
                 for b in produced:
                     queues[next_qid].add(b)

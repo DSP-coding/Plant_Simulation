@@ -64,6 +64,7 @@ plant_sim/simulation.py    The hour-by-hour engine that ties it all together
 plant_sim/floor_view.py    The live animated factory-floor visualization (playback)
 plant_sim/floor_editor.py  The drag-and-drop floor (Streamlit component wrapper + move rule)
 plant_sim/floor_editor/    ...and its single-file HTML/JS front end (no build step)
+plant_sim/constraints.py   Theory-of-Constraints read-out of a run (bottleneck, buffers, staff utilisation, improvements)
 plant_sim/theme.py         Dezignatek brand styling (teal/navy, fonts, wordmark header, footer)
 .streamlit/config.toml     Streamlit theme colours (dark, teal primary) - committed on purpose
 data/staff_roster.csv      The actual roster - names, skills, shifts, absence rates

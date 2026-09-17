@@ -22,6 +22,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from plant_sim import config as cfg
+from plant_sim.constraints import analyse as analyse_constraints
 from plant_sim.floor_editor import apply_move, floor_editor, restore, snapshot
 from plant_sim.floor_view import build_floor_html
 from plant_sim.simulation import Simulator, SimulationSettings
@@ -206,6 +207,19 @@ with st.sidebar:
                                         "in total - the results tab shows what this setting produces.")
 
     st.divider()
+    st.header("Buffer space limits")
+    with st.expander("WIP limits in front of each station (m²)", expanded=False):
+        st.caption("Real rack / trolley space. 0 = no limit. A station whose downstream buffer is "
+                   "full stops (\"blocked\") - the constraints analysis reports those hours.")
+        buffer_caps_m2 = {}
+        for qid in ["cnc_thermo", "sanding", "mb_sander", "edging", cfg.PRESS_QUEUE_ID, "despatch",
+                    "optimising", "cnc_1536", "edge_bander", "drilling"]:
+            lbl = "Press (shared pile)" if qid == cfg.PRESS_QUEUE_ID else station_label(qid)
+            default_cap = cfg.BUFFER_CAP_M2_BY_STATION.get(qid, 0.0)
+            buffer_caps_m2[qid] = st.number_input(f"Before {lbl}", min_value=0.0, value=float(default_cap),
+                                                  step=10.0, key=f"buf_{qid}")
+
+    st.divider()
     st.header("Sick leave")
     sick_enabled = st.checkbox("Enable random sick leave (per-person rate, edit in Staff tab)",
                                 value=False)
@@ -226,6 +240,7 @@ def run_simulation() -> None:
             remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
             special_order_pct=special_order_pct,
             sick_enabled=sick_enabled, random_seed=int(seed),
+            buffer_caps_m2={q: v for q, v in buffer_caps_m2.items() if v > 0},
         )
         with st.spinner("Simulating..."):
             st.session_state.sim_result = Simulator(roster, settings).run()
@@ -480,6 +495,73 @@ with tab_results:
                 st.warning(f"{cfg.CNC_THERMO_SPECIAL_MACHINE} had nobody on it for "
                            f"{lanes['c6_unmanned_hours']:.0f} running hours - remakes and special orders had to "
                            "queue behind regular work on the other machines.")
+
+        # -- Theory of Constraints read-out --
+        st.divider()
+        label("Theory of Constraints", teal=True)
+        st.subheader("Constraints, bottlenecks and where to improve")
+        st.caption("Identify → Exploit → Subordinate → Elevate, per line, from this run. A **bottleneck** is busy "
+                   "and backing up; a **CCR** is busy but keeping up (no slack); **external** means the floor "
+                   "isn't the limit at this intake. Buffers are shown in hours of the receiving station's work. "
+                   "This diagnoses - test a suggestion by dragging people on the Factory Floor and re-running.")
+        report = analyse_constraints(result, roster)
+        toc_cols = st.columns(2)
+        kind_word = {"bottleneck": "Bottleneck", "ccr": "CCR (busy, keeping up)", "external": "External"}
+        for col, rc in zip(toc_cols, report.by_route.values()):
+            with col:
+                st.markdown(f"### {rc.label}")
+                c = rc.constraint
+                k1, k2 = st.columns(2)
+                k1.metric("Constraint", short_station_label(c.station) if c else "None on the floor",
+                          kind_word[rc.kind], delta_color="off")
+                if c:
+                    k2.metric("Utilisation", f"{c.utilisation * 100:.0f}%",
+                              f"queue {c.queue_start_m2:,.0f} → {c.queue_end_m2:,.0f} m²", delta_color="off")
+                elif rc.next_constraint:
+                    k2.metric("Busiest station", short_station_label(rc.next_constraint.station),
+                              f"{rc.next_constraint.utilisation * 100:.0f}% utilised", delta_color="off")
+                if rc.next_constraint and c:
+                    st.caption(f"Next in line: **{rc.next_constraint.label}** "
+                               f"({rc.next_constraint.utilisation * 100:.0f}%, "
+                               f"{rc.next_constraint.headroom_m2_per_week:,.0f} m²/week headroom).")
+
+                st.markdown("**Stations on this line**")
+                st.dataframe(pd.DataFrame([{
+                    "Station": r.label + (" (shared)" if r.shared else ""),
+                    "Util %": round(r.utilisation * 100),
+                    "Labour %": round(r.labour_utilisation * 100),
+                    "Flat-out h": round(r.flat_out_h),
+                    "Starved h": round(r.starved_h),
+                    "Unstaffed h": round(r.unstaffed_h),
+                    "Blocked h": round(r.blocked_h),
+                    "Queue start→end m²": f"{r.queue_start_m2:,.0f} → {r.queue_end_m2:,.0f}",
+                    "Buffer (h of work)": round(r.buffer_avg_h, 1),
+                    "Headroom m²/wk": round(r.headroom_m2_per_week),
+                } for r in rc.rows]), width="stretch", hide_index=True)
+
+                st.markdown("**Buffers in front of each station (hours of its own work, average)**")
+                st.bar_chart(pd.DataFrame({"hours": [r.buffer_avg_h for r in rc.rows]},
+                                          index=[short_station_label(r.station) for r in rc.rows]))
+                for n in rc.buffer_notes:
+                    st.caption("• " + n)
+
+                if rc.policy_constraints:
+                    st.markdown("**Policy constraints** (things utilisation can't show)")
+                    for n in rc.policy_constraints:
+                        st.markdown(f"- {n}")
+
+                st.markdown("**Where to improve, in order**")
+                for i, sg in enumerate(rc.suggestions, start=1):
+                    gain = f" — *est. +{sg.gain_m2_per_week:,.0f} m²/week*" if sg.gain_m2_per_week else ""
+                    st.markdown(f"{i}. **{sg.step}** · {sg.text}{gain}")
+
+        st.markdown("**Staff utilisation by station** (labour % = productive share of staffed hours)")
+        st.dataframe(pd.DataFrame(report.station_labour).round(0), width="stretch", hide_index=True)
+        with st.expander("Per-person time study (rostered / producing / waiting / covering / absent hours)"):
+            st.caption("Producing = their station's productive share of the hour; waiting = the rest. "
+                       "Box packing and admin aren't simulated, so those people are listed but not rated. "
+                       "Sorted lowest utilisation first.")
+            st.dataframe(pd.DataFrame(report.people).round(1), width="stretch", hide_index=True)
 
         # -- reality check against the real plant figures in config.py --
         st.divider()

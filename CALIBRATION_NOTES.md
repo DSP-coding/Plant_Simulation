@@ -308,6 +308,47 @@ against a real ~315. The reality-check panel now compares the month's
 remade m² with the real 163-468 range. Seasonality (Feb-May high, ~1,000+
 remakes/month; Jan and Jun-Aug ~600) isn't modelled - the rate is flat.
 
+## Session 5 - Theory of Constraints analysis
+
+The Results tab gained a **Constraints** section (`plant_sim/constraints.py`),
+one block per line, built from the run just done (no automatic what-ifs):
+
+- **Identify**: the constraint = the station with the highest utilisation
+  that is also backing up (a *bottleneck*); if it's busy but keeping up
+  it's reported as a *CCR*; if nothing is above 85% the constraint is
+  *external* (intake). Plus "next in line". Thresholds at the top of the
+  module are analysis settings, not plant facts.
+- **Evidence** per station: utilisation, labour utilisation (productive
+  share of staffed hours), flat-out / starved / unstaffed / blocked hours,
+  queue start → end, buffer in **hours of that station's own work**,
+  headroom m²/week.
+- **Policy constraints**: crews running fewer days than orders arrive,
+  no afternoon shift, single-machine one-person stations, unstaffed hours,
+  C6 unmanned, blocked-by-full-buffer hours.
+- **Buffers**: thin buffer in front of the constraint (< 8 h) flagged;
+  fat buffers elsewhere (> 24 h) flagged as waiting, not protection.
+- **Where to improve**, TOC order: Exploit (unstaffed / starved / blocked
+  hours at the constraint), Subordinate (upstream over-feeding), Elevate
+  (+1 person, +2 h/day, 5th day, with m²/week estimates and named
+  cross-training candidates), Next.
+- **Staff utilisation**: per station (labour %) and a per-person time
+  study (rostered / producing / waiting / covering / absent). Box packing
+  and admin aren't simulated, so those people are listed but not rated.
+
+Two engine changes came out of building it:
+- **The presses now share their pile in proportion to capacity** (Press 1
+  used to be processed first and hog the work: 83% vs 25%; now 57/57).
+- **Real buffer limits** can be entered per station (sidebar → Buffer
+  space limits, or `cfg.BUFFER_CAP_M2_BY_STATION`); a full buffer blocks
+  the station before it and the analysis reports the blocked hours.
+- The sheet's "cover" people are now rostered as splits: Jerald 1536 +
+  edge bander (afternoons), Bang / Jeremy Press + Weeke (new).
+
+At the median month the read-out is: Thermo constraint = Manual Sanding
+(97%, queue growing), next Dispatch; Cut & Clash CCR = B1536 (94%,
+keeping up); policy constraints = 4-day Thermo crews vs 5-day intake, no
+afternoon drill operator, one-person MB Sander.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working

@@ -598,6 +598,14 @@ DEFAULT_ABSENCE_RATE_PCT = 3.8
 # station once you know real shelf/trolley space limits.
 DEFAULT_BUFFER_CAP_M2 = 5000.0
 
+# Real WIP space limits, per queue (station id, or "press" for the shared
+# press pile), in m2. A station whose downstream buffer is full is BLOCKED
+# and stops producing - the constraints analysis reports those hours.
+# Empty = every buffer uses DEFAULT_BUFFER_CAP_M2 (effectively unlimited).
+# Fill in real rack / trolley limits here as they become known, e.g.
+#   BUFFER_CAP_M2_BY_STATION = {"mb_sander": 120.0, "press": 200.0}
+BUFFER_CAP_M2_BY_STATION: dict[str, float] = {}
+
 # [SIMULATION METHODOLOGY, not a plant fact] Every run starts with every
 # queue completely empty - the real factory never does; it always has
 # work-in-progress already sitting at every station. Without a warm-up, the

@@ -27,6 +27,7 @@ from plant_sim.orders import Batch, StationQueue             # noqa: E402
 from plant_sim.simulation import Simulator, SimulationSettings  # noqa: E402
 from plant_sim.staff import Operator, Roster, RosterError    # noqa: E402
 from plant_sim.floor_editor import apply_move, restore, snapshot  # noqa: E402
+from plant_sim.constraints import analyse  # noqa: E402
 
 ROSTER_CSV = PROJECT_ROOT / "data" / "staff_roster.csv"
 
@@ -668,6 +669,51 @@ class FloorEditorTests(unittest.TestCase):
         self.assertEqual(r.staffing_by_shift["0|day"]["cnc_1536"], ["Day Op"])
         self.assertEqual(r.staffing_by_shift["0|aft"]["cnc_1536"], ["Aft Op"])
         self.assertEqual(r.trace[0]["day"], 0)
+
+
+class ConstraintsTests(unittest.TestCase):
+    def test_report_covers_both_lines_and_finds_the_busy_station(self):
+        r = Simulator(real_roster(), settings(horizon="month", warmup_days=cfg.SIMULATION_WARMUP_DAYS)).run()
+        rep = analyse(r, real_roster())
+        self.assertEqual(set(rep.by_route), {cfg.Route.THERMO, cfg.Route.CUT_AND_CLASH})
+        for rc in rep.by_route.values():
+            self.assertIn(rc.kind, ("bottleneck", "ccr", "external"))
+            self.assertTrue(rc.suggestions)
+            self.assertTrue(all(0.0 <= row.utilisation <= 1.0 for row in rc.rows))
+            if rc.constraint is not None:
+                self.assertEqual(rc.constraint, max(
+                    (row for row in rc.rows if row.utilisation >= 0.85), key=lambda row: (row.growing, row.utilisation)))
+        self.assertTrue(rep.people)
+        self.assertTrue(any(p["Utilisation %"] is None for p in rep.people))   # box packers not rated
+
+    def test_starving_a_station_is_detected(self):
+        # No CNC operator at all: sanding is staffed but starved every hour; CNC unstaffed.
+        ops = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.FLOW_STATIONS if sid != "cnc_thermo"
+               for sh in cfg.SHIFT_LABELS]
+        r = Simulator(Roster(ops), settings(horizon="week", mix_pct={"S1": 100.0})).run()
+        rep = analyse(r, Roster(ops))
+        rows = {row.station: row for row in rep.by_route[cfg.Route.THERMO].rows}
+        self.assertGreater(rows["cnc_thermo"].unstaffed_h, 0)
+        self.assertGreater(rows["sanding"].starved_h, 0)
+        self.assertTrue(any("nobody on it" in n for n in rep.by_route[cfg.Route.THERMO].policy_constraints))
+
+    def test_buffer_limit_blocks_upstream(self):
+        base = settings(horizon="week", mix_pct={"S1": 100.0})
+        capped = SimulationSettings(**{**vars(base), "buffer_caps_m2": {"sanding": 5.0}})
+        r = Simulator(tiny_roster(), capped).run()
+        self.assertGreater(r.station_blocked_hours["cnc_thermo"], 0)
+        self.assertLessEqual(max(t["buf"]["sanding"] for t in r.trace), 5.0 + 1e-6)
+
+    def test_presses_share_the_pile(self):
+        r = Simulator(real_roster(), settings(horizon="week", warmup_days=cfg.SIMULATION_WARMUP_DAYS)).run()
+        u1, u2 = r.station_utilisation["press_1"], r.station_utilisation["press_2"]
+        self.assertAlmostEqual(u1, u2, delta=0.05)
+
+    def test_person_hours_add_up(self):
+        r = Simulator(real_roster(), settings(horizon="week", warmup_days=cfg.SIMULATION_WARMUP_DAYS)).run()
+        for h in r.person_hours.values():
+            self.assertAlmostEqual(h["producing"] + h["waiting"], h["rostered"], places=6)
+            self.assertLessEqual(h["covering"], h["rostered"] + 1e-9)
 
 
 @unittest.skipUnless(os.environ.get("PLANT_SIM_UI_TESTS", "1") == "1", "UI tests disabled")
