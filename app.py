@@ -22,6 +22,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from plant_sim import config as cfg
+from plant_sim.charts import bar_chart, line_chart
 from plant_sim.constraints import analyse as analyse_constraints
 from plant_sim.floor_editor import apply_move, floor_editor, restore, snapshot
 from plant_sim.floor_view import build_floor_html
@@ -620,8 +621,9 @@ with tab_results:
                 } for r in rc.rows]), width="stretch", hide_index=True)
 
                 st.markdown("**Buffers in front of each station (hours of its own work, average)**")
-                st.bar_chart(pd.DataFrame({"hours": [r.buffer_avg_h for r in rc.rows]},
-                                          index=[short_station_label(r.station) for r in rc.rows]))
+                bar_chart(pd.DataFrame({"hours": [r.buffer_avg_h for r in rc.rows]},
+                                       index=pd.Index([short_station_label(r.station) for r in rc.rows], name="Station")),
+                          y_title="hours of work", height=220)
                 for n in rc.buffer_notes:
                     st.caption("• " + n)
                 if rc.protective_buffers:
@@ -714,14 +716,14 @@ with tab_results:
             "Station": [station_label(s) for s in result.station_utilisation if cfg.is_flow_station(s)],
             "Utilisation %": [v * 100 for s, v in result.station_utilisation.items() if cfg.is_flow_station(s)],
         }).set_index("Station")
-        st.bar_chart(util_df)
+        bar_chart(util_df, y_title="Utilisation %")
 
         st.subheader("Buffer / queue levels over time (m²)")
         buf_df = pd.DataFrame([
             {"hour": t["h"], **{station_label(k): v for k, v in t["buf"].items() if cfg.is_flow_station(k)}}
             for t in result.trace
         ]).set_index("hour")
-        st.line_chart(buf_df)
+        line_chart(buf_df, x_title="hour", y_title="m² waiting")
 
         st.subheader("Cumulative intake vs completed vs remade (m²)")
         cum_df = pd.DataFrame([
@@ -729,7 +731,7 @@ with tab_results:
              "Remade": t["cum_remade"]}
             for t in result.trace
         ]).set_index("hour")
-        st.line_chart(cum_df)
+        line_chart(cum_df, x_title="hour", y_title="m²")
 
         if result.has_completions:
             st.subheader("Lead time & DIFOT by day completed - Thermo vs Cut & Clash")
@@ -745,8 +747,10 @@ with tab_results:
                     for d in rm.daily_stats
                 ]).set_index("Day")
                 col_a, col_b = st.columns(2)
-                col_a.line_chart(route_daily_df[[f"Avg lead ({unit})"]])
-                col_b.bar_chart(route_daily_df[["DIFOT %"]])
+                with col_a:
+                    line_chart(route_daily_df[[f"Avg lead ({unit})"]], x_title="day", y_title=unit, height=240)
+                with col_b:
+                    bar_chart(route_daily_df[["DIFOT %"]], x_title="day", y_title="DIFOT %", height=240)
         else:
             st.info("No completions in this horizon.")
 
@@ -755,7 +759,7 @@ with tab_results:
             "Class": [cfg.PRODUCT_CLASSES[c].label for c in result.completed_m2_by_class],
             "Completed m²": list(result.completed_m2_by_class.values()),
         }).set_index("Class")
-        st.bar_chart(class_df)
+        bar_chart(class_df, y_title="m²")
 
         st.subheader("Attendance by day (working / idle / absent / day off)")
         st.caption("Each person appears once per day under their own shift. *idle* = rostered on "
@@ -764,7 +768,8 @@ with tab_results:
         if result.attendance_log:
             att_df = pd.DataFrame(result.attendance_log)
             pivot = att_df.groupby(["day", "status"]).size().unstack(fill_value=0)
-            st.bar_chart(pivot)
+            pivot.index.name = "day"
+            bar_chart(pivot, x_title="day", y_title="people")
             idle_people = (att_df[att_df["status"] == "idle"]
                            .groupby("operator_name").size().sort_values(ascending=False))
             if len(idle_people):
