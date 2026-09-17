@@ -33,14 +33,14 @@ it and shows the outcome, including a live animated factory-floor view.
 | Station | Rate | Status | Source |
 |---|---|---|---|
 | Optimising | 57.16 m²/op-hr | **REAL** | 90th-pct daily "Optimisation" scan total ÷ real op-hours (3-month export) |
-| CNC (Thermo) | cut-time model, **4 machines** (1224, C6, Weeke 100, Weeke 480) | machine count **REAL** (shop-floor sheet); cut times ASSUMPTION | S1/S2/S3 min-per-board guesses carried from the old tool |
+| CNC (Thermo) | **10,000 m²/month** (4 machines, 5-day × 16 h basis) | **REAL** (Thermo capacity overview) | the per-series cut times are still old-tool placeholders, scaled to hit this total; their S1/S2/S3 ratios are assumptions |
 | CNC 1536 (Cut & Clash) | cut-time model, 1 machine | ASSUMPTION | same as above |
 | Edge bander / Drilling | 13 m²/op-hr each, one operator each, in series | ASSUMPTION | split into two stations (session 4b) to match the floor; each keeps the old combined station's 13 m²/hr throughput at the real 1+1 staffing. No real checkpoint for either yet |
-| Manual Sanding | 11.52 m²/op-hr | **REAL-derived lower bound** | the combined "Sanding" checkpoint proves ≥8,007 m²/month passes through manual sanding *and* the MB Sander, so manual sanding can do at least that at its 2-person crew (the old 6.5 capped it at ~4,500 m²/month and made it the plant's worst bottleneck - see session 3) |
-| MB Sander | 23.04 m²/op-hr, **one operator** | **REAL** | everything sanded is fed through this one machine, run by one person per shift (shop-floor sheet) - real ~8,007 m²/month ceiling ÷ ideal_ops=1 on reference hours |
+| Manual Sanding | **10,000 m²/month** (= CNC line) | **REAL, per the plant** | sanding right behind the CNCs with the MB running non-stop keeps pace with the CNCs (the overview's 4,500 "manual profile sanding" figure is the standalone rate) |
+| MB Sander | **63,000 m²/month**, one operator | **REAL** (Thermo capacity overview) | far faster than anything feeding it - never the constraint. (The ~8,007 m²/month used earlier was the volume passing through, not capability) |
 | Cefla Automated Gluing Line | 12.95 m²/op-hr | **REAL** | confirmed capacity 9,000 m²/month (was wrongly split into two stations "Edging" + "Glue" - merged) |
-| Press 1 / Press 2 | 5.37 m²/op-hr each | **REAL** | 90th-pct daily "Thermoform Press" scan total (can't tell the two machines apart in the data) |
-| Despatch/Packing | 9.12 m²/op-hr | **REAL** | average of the real "Packing" and "Despatch" checkpoints |
+| Press 1 / Press 2 | **9,500 m²/month each** at a 3-person crew | **REAL, per the plant** | the overview's 21,000/press is theoretical. Machine-paced: fewer than 3 people runs slower, more doesn't run faster |
+| Despatch/Packing | 9.12 m²/op-hr, **people-driven** | **REAL** | average of the real "Packing" and "Despatch" checkpoints; capacity = rate × people present, so absenteeism hits it directly |
 | Remake rate | 5.0% of packed m² | **REAL** | 2026 monthly waste report: 2,079 m² remade of 42,010 m² output Jan-Jun (4.95%); 315 m²/month average Jan-Aug. (The lead-time dashboard's 7.03% is a *parts* ratio - remade parts are small, so the m² rate is lower; the engine works in m².) |
 | Remake lead-time penalty | +0.32 working days | **REAL** | live lead-time dashboard. The 0.32 is the *total* extra time a remake takes; the engine's `remake_days` is the hold before re-entry, and the results tab reports the simulated penalty next to the real one |
 | Thermo avg lead time | 8.66 working days | **REAL** | live lead-time dashboard (8.64 non-remake / 8.97 remake) - used by the reality-check panel |
@@ -348,6 +348,17 @@ At the median month the read-out is: Thermo constraint = Manual Sanding
 (97%, queue growing), next Dispatch; Cut & Clash CCR = B1536 (94%,
 keeping up); policy constraints = 4-day Thermo crews vs 5-day intake, no
 afternoon drill operator, one-person MB Sander.
+
+## Session 5b - Thermo capacity overview (5-day × 16 h basis)
+
+The plant's capacity overview gave per-area ceilings on exactly the model's
+reference schedule (80 h/week), so they slot straight in as "capacity at
+ideal staffing": CNCs 10,000 m²/month (the placeholder cut times are now
+scaled to hit it), MB Sander 63,000 (never a constraint), Cefla 9,000
+(unchanged), presses **9,500 each** (per the plant; the sheet's 21,000 is
+theoretical), and manual sanding set equal to the CNC line's 10,000
+because sanding runs right behind the CNCs with the MB non-stop. Packing
+stays people-driven so absenteeism flows straight into its capacity.
 
 ## Open questions (need your input, not guessable from data)
 

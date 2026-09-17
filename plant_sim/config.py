@@ -185,36 +185,25 @@ STATIONS: dict[str, Station] = {
     "cnc_thermo": Station("cnc_thermo", "CNC (Thermo)", Route.THERMO,
                            ideal_ops=4, capacity_m2_per_op_hour=0.0, num_machines=4,
                            machines=("Weeke (old)", "B1224", "Weeke (new)", "C6")),
-    # [REAL-derived lower bound] Manual sanding has no machine limit (several
-    # people can sand profiles in parallel), and per the user it is NOT the
-    # real constraint - everything gets fed through the single MB Sander
-    # afterwards, which is the true funnel point (see below). The real scan
-    # data has one "Sanding" checkpoint covering BOTH manual sanding and the
-    # MB Sander, and it shows ~8,007 m2/month getting through - so manual
-    # sanding's capacity at its normal 2-person crew is AT LEAST that. Rate =
-    # 8007 / (ideal_ops=2 * REFERENCE_HOURS_PER_MONTH), the same figure the
-    # MB Sander gets. (The earlier 6.5 m2/op-hr placeholder was meant to be
-    # "comfortably non-bottleneck" but actually capped sanding at ~4,500
-    # m2/month - well under Thermo's ~5,900 m2/month intake - which made it
-    # the plant's biggest bottleneck by a wide margin, contradicting both the
-    # scan data and the stated intent.)
+    # [REAL, Thermo capacity overview + plant] Manual sanding has no machine
+    # limit (people sand profiles in parallel). The capacity overview lists
+    # "Manual Profile Sanding" at 4,500 m2/month, but per the plant, sanding
+    # done right behind the CNCs with the MB Sander running non-stop keeps
+    # pace with the CNCs - so manual sanding is given the CNC line's 10,000
+    # m2/month at its 2-person crew. Rate = 10000 / (2 * REFERENCE_HOURS_PER_MONTH).
+    # (History: the scan checkpoint's ~8,007 m2/month was used before that;
+    # an earlier 6.5 m2/op-hr placeholder made sanding the worst bottleneck.)
     "sanding":    Station("sanding", "Manual Sanding", Route.THERMO,
-                           ideal_ops=2, capacity_m2_per_op_hour=11.517548906789415),
-    # [REAL, from 3-month WorkArea scan-checkpoint data, see chat] The real
-    # scan system has only ONE checkpoint ("Sanding") covering both manual
-    # sanding and the MB Sander - but per the user, EVERYTHING that's
-    # manually sanded then gets fed through this one machine, so that
-    # checkpoint's real ceiling (90th-percentile daily total, extrapolated to
-    # a month = ~8,007 m2/month) belongs to the MB Sander specifically, not
-    # to manual sanding. Rate = 8007 / (ideal_ops=2 * REFERENCE_HOURS_PER_MONTH).
-    # [REAL, shop-floor sheet Sep 2026] the MB Sander is run by ONE person per
-    # shift (Quyen days, Viet afternoons) - the earlier 2-person infeed/
-    # outfeed model was an old-tool assumption. The real ~8,007 m2/month
-    # ceiling therefore belongs to a single operator: rate = 8007 /
-    # (ideal_ops=1 * REFERENCE_HOURS_PER_MONTH). machine_bound: a second
-    # person can't make the one machine run faster.
+                           ideal_ops=2, capacity_m2_per_op_hour=14.384349827387803),
+    # [REAL, Thermo capacity overview] MB Sander = 63,000 m2/month on the 5-day
+    # x 16 h basis - the machine is far faster than anything feeding it, so
+    # it is never the constraint. Run by ONE person per shift (shop-floor
+    # sheet: Quyen days, Viet afternoons): rate = 63000 / (1 *
+    # REFERENCE_HOURS_PER_MONTH). machine_bound: a second person can't make
+    # the one machine run faster. (The scan checkpoint's ~8,007 m2/month used
+    # earlier was the volume passing through it, not its capability.)
     "mb_sander":  Station("mb_sander", "MB Sander", Route.THERMO,
-                           ideal_ops=1, capacity_m2_per_op_hour=23.03509781357883, num_machines=1,
+                           ideal_ops=1, capacity_m2_per_op_hour=181.24280782508632, num_machines=1,
                            machine_bound=True),
     # [REAL] "Edging" and "Glue" were originally modelled as two separate
     # stations, but there is only one real physical station here: the Cefla
@@ -230,25 +219,25 @@ STATIONS: dict[str, Station] = {
     # two machines doing the same job on one shared pile of work - see
     # PRESS_QUEUE_ID / PRESS_STATIONS below and the dedicated handling in
     # simulation.py, rather than each getting its own separate buffer.
-    # [REAL, from 3-month WorkArea scan-checkpoint data] rate = 90th-percentile
-    # daily "Thermoform Press" scan total, extrapolated to a month, divided by
-    # the two presses' combined real op-hours (1,390/month, 4+4 people) - the
-    # real data can't tell Press 1 and Press 2 apart (one shared checkpoint),
-    # so both machines get the same blended rate.
-    # NOT machine_bound (yet): that rate was derived per op-hour across all
-    # 8 real press people, so a linear per-person model is what reproduces
-    # the observed ceiling at the real roster. Flip machine_bound=True (and
-    # set ideal_ops to the real crew size) once a per-press cycle time is
-    # known - a press physically can't go faster with a 5th person on it.
+    # [REAL, per the plant] 9,500 m2/month per press at its 3-person crew on
+    # the 5-day x 16 h basis (the capacity overview's 21,000 is theoretical).
+    # Rate = 9500 / (3 * REFERENCE_HOURS_PER_MONTH). Kept per-person rather
+    # than machine_bound: with fewer than 3 the press runs slower, with more
+    # it doesn't run faster - see Station.machine_bound. (The scan-derived
+    # 5.37 m2/op-hr used earlier was throughput at real staffing, not capacity.)
     "press_1":    Station("press_1", "Press 1", Route.THERMO,
-                           ideal_ops=3, capacity_m2_per_op_hour=5.370, num_machines=1),
+                           ideal_ops=3, capacity_m2_per_op_hour=9.110088224012275, num_machines=1,
+                           machine_bound=True),
     "press_2":    Station("press_2", "Press 2", Route.THERMO,
-                           ideal_ops=3, capacity_m2_per_op_hour=5.370, num_machines=1),
+                           ideal_ops=3, capacity_m2_per_op_hour=9.110088224012275, num_machines=1,
+                           machine_bound=True),
     # [REAL, from 3-month WorkArea scan-checkpoint data] rate = average of the
     # 90th-percentile daily "Packing" and "Despatch" scan totals (two separate
     # real checkpoints for what this model treats as one combined stage),
     # extrapolated to a month, divided by the despatch team's real op-hours
     # (1,390/month, 8 people). Close to the old 8.7 guess.
+    # Packing is people-driven (NOT machine_bound): capacity = rate x whoever
+    # is actually there, so absenteeism and cover moves flow straight into it.
     "despatch":   Station("despatch", "Packing / Despatch", None,
                            ideal_ops=3, capacity_m2_per_op_hour=9.124),
     # [REAL, shop-floor sheet Sep 2026] Hafele and DIY sit under Dispatch on
@@ -281,11 +270,22 @@ CNC_UTILISATION = 0.80   # [ASSUMPTION] machine uptime while manned
 CNC_STATION_IDS = ("cnc_thermo", "cnc_1536")
 
 
-def default_cnc_capacity_m2_per_month(route: str) -> float:
+# [REAL, Thermo capacity overview] the four Thermo CNCs together do 10,000
+# m2/month on the 5-day x 16 h basis. The per-series cut times above are
+# still old-tool placeholders, so this figure is used as the CNC line's
+# default capacity and the cut times are scaled to hit it (their S1/S2/S3
+# ratios are kept). Cut & Clash's B1536 has no such figure yet.
+CNC_CAPACITY_M2_PER_MONTH_OVERRIDE: dict[str, float] = {
+    Route.THERMO: 10000.0,
+}
+
+
+def cnc_capacity_from_cut_times(route: str) -> float:
     """What the CNC line on this route would produce per month, running the
     reference schedule flat out at ideal staffing, cutting the DEFAULT_MIX_PCT
-    blend of its own classes. This is the baseline that a user-entered target
-    capacity is compared against to derive the scale factor in simulation.py.
+    blend of its own classes AT THE PLACEHOLDER CUT TIMES. This is the
+    baseline a target capacity is compared against to derive the cut-time
+    scale factor in simulation.py.
     """
     station = next(s for s in STATIONS.values() if s.id in CNC_STATION_IDS and s.route == route)
     classes = [c for c, pc in PRODUCT_CLASSES.items() if pc.route == route]
@@ -311,6 +311,12 @@ def cnc_min_per_m2(product_class: str) -> float:
     spread over the board's area) at the default cut times."""
     pc = PRODUCT_CLASSES[product_class]
     return (pc.cnc_min_per_board + CNC_SETUP_MIN_PER_BOARD) / BOARD_M2
+
+
+def default_cnc_capacity_m2_per_month(route: str) -> float:
+    """The CNC line's default capacity: the real figure if we have one, else
+    what the placeholder cut times imply."""
+    return CNC_CAPACITY_M2_PER_MONTH_OVERRIDE.get(route, cnc_capacity_from_cut_times(route))
 
 
 def default_station_capacity_m2_per_month(station_id: str) -> float:

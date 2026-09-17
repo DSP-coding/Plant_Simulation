@@ -754,7 +754,7 @@ class Simulator:
             target_month = s.station_capacity_m2_per_month.get(
                 sid, cfg.default_station_capacity_m2_per_month(sid))
             if sid in cfg.CNC_STATION_IDS:
-                default_month = cfg.default_cnc_capacity_m2_per_month(station.route)
+                default_month = cfg.cnc_capacity_from_cut_times(station.route)
                 # scale > 1 means the edited capacity is HIGHER than the
                 # default, i.e. the machine cuts faster than the default
                 # per-class times - so time-per-m2 shrinks by the same
