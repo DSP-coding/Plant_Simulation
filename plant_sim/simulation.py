@@ -76,6 +76,13 @@ class SimulationSettings:
     # buffer_cap_m2. 0 or less means unlimited. See cfg.BUFFER_CAP_M2_BY_STATION.
     buffer_caps_m2: dict[str, float] = field(default_factory=lambda: dict(cfg.BUFFER_CAP_M2_BY_STATION))
 
+    # Protective buffer targets (m2) the analysis checks - see cfg.BUFFER_TARGET_M2_BY_QUEUE.
+    buffer_targets_m2: dict[str, float] = field(default_factory=lambda: dict(cfg.BUFFER_TARGET_M2_BY_QUEUE))
+    # Press batching: run only once the pile reaches `start`, stop when it falls
+    # to `stop`. start <= 0 = continuous running. See cfg.DEFAULT_PRESS_BATCH_*.
+    press_batch_start_m2: float = cfg.DEFAULT_PRESS_BATCH_START_M2
+    press_batch_stop_m2: float = cfg.DEFAULT_PRESS_BATCH_STOP_M2
+
     def buffer_cap_for(self, queue_id: str) -> float:
         cap = self.buffer_caps_m2.get(queue_id, self.buffer_cap_m2)
         return cap if cap and cap > 0 else math.inf
@@ -127,6 +134,13 @@ class SimulationSettings:
         for qid in self.buffer_caps_m2:
             if qid not in cfg.STATIONS and qid != cfg.PRESS_QUEUE_ID:
                 p.append(f"buffer_caps_m2 has unknown queue {qid!r}")
+        for qid in self.buffer_targets_m2:
+            if qid not in cfg.STATIONS and qid != cfg.PRESS_QUEUE_ID:
+                p.append(f"buffer_targets_m2 has unknown queue {qid!r}")
+        if self.press_batch_start_m2 < 0 or self.press_batch_stop_m2 < 0:
+            p.append("press batch levels cannot be negative")
+        if self.press_batch_start_m2 > 0 and self.press_batch_stop_m2 >= self.press_batch_start_m2:
+            p.append("press_batch_stop_m2 must be below press_batch_start_m2")
         if p:
             raise ValueError("SimulationSettings problems:\n  - " + "\n  - ".join(p))
 
@@ -206,6 +220,7 @@ class SimulationResult:
     station_busy_hours: dict[str, float] = field(default_factory=dict)      # staffed AND had work at the start of the hour
     station_flat_out_hours: dict[str, float] = field(default_factory=dict)  # staffed and could not clear its queue (capacity-limited)
     station_blocked_hours: dict[str, float] = field(default_factory=dict)   # output limited by a full downstream buffer
+    station_held_hours: dict[str, float] = field(default_factory=dict)      # staffed but idle BY POLICY (press batching)
     station_queue_avg_m2: dict[str, float] = field(default_factory=dict)    # average m2 waiting (over running hours)
     station_queue_max_m2: dict[str, float] = field(default_factory=dict)
     station_capacity_m2_per_hour: dict[str, float] = field(default_factory=dict)  # average while staffed (CNCs converted from minutes)
@@ -306,6 +321,8 @@ class Simulator:
         station_busy_hours = {sid: 0.0 for sid in cfg.STATIONS}
         station_flat_out_hours = {sid: 0.0 for sid in cfg.STATIONS}
         station_blocked_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        station_held_hours = {sid: 0.0 for sid in cfg.STATIONS}
+        self._press_running = s.press_batch_start_m2 <= 0     # batch state carries hour to hour
         station_queue_sum = {sid: 0.0 for sid in cfg.STATIONS}
         station_queue_max = {sid: 0.0 for sid in cfg.STATIONS}
         person_hours = {op.id: {"rostered": 0.0, "producing": 0.0, "waiting": 0.0, "covering": 0.0, "absent": 0.0}
@@ -436,18 +453,21 @@ class Simulator:
                         station_starved_hours[sid] += 1
 
             blocked_now: set[str] = set()
+            held_now: set[str] = set()
             util_now: dict[str, float] = {}
             hour_out = self._process_hour(queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
                                           cnc_minutes_by_class, station_out_sum, station_cap_sum,
                                           (c6_minutes, main_minutes), lanes if recording else None,
-                                          blocked_now, util_now)
+                                          blocked_now, util_now, held_now)
             if recording:
                 for sid in active_now:
                     if ops_per_station[sid] <= 0:
                         continue
                     u = util_now.get(sid, 0.0)
                     station_busy_hours[sid] += u                # productive share of the staffed hour
-                    if sid in blocked_now:
+                    if sid in held_now:
+                        station_held_hours[sid] += 1
+                    elif sid in blocked_now:
                         station_blocked_hours[sid] += 1
                     elif u >= 0.98:
                         station_flat_out_hours[sid] += 1        # capacity-limited this hour
@@ -583,6 +603,7 @@ class Simulator:
             station_busy_hours=station_busy_hours,
             station_flat_out_hours=station_flat_out_hours,
             station_blocked_hours=station_blocked_hours,
+            station_held_hours=station_held_hours,
             station_queue_avg_m2={sid: (station_queue_sum[sid] / station_active_hours[sid]
                                         if station_active_hours[sid] > 0 else 0.0) for sid in cfg.STATIONS},
             station_queue_max_m2=station_queue_max,
@@ -851,7 +872,7 @@ class Simulator:
     def _process_hour(self, queues, ops_per_station, op_hour_rate, cnc_min_per_m2,
                        cnc_minutes_by_class, station_out_sum, station_cap_sum,
                        thermo_lanes=(0.0, 0.0), lane_stats=None, blocked_now=None,
-                       util_now=None) -> dict[str, list[Batch]]:
+                       util_now=None, held_now=None) -> dict[str, list[Batch]]:
         """Run one simulated hour of production through every station, in
         cfg.PROCESSING_ORDER (downstream first), and return
         {station_id: [output batches]}.
@@ -891,9 +912,24 @@ class Simulator:
                     continue
                 caps = {p: self._flat_capacity_m2_per_hour(cfg.STATIONS[p], ops_per_station[p], op_hour_rate[p])
                         for p in cfg.PRESS_STATIONS}
-                total_cap = sum(caps.values())
+                # Batch running: wait for the pile to build, then run it down.
+                start, stop = self.settings.press_batch_start_m2, self.settings.press_batch_stop_m2
+                pile = queue.total_m2()
+                if start > 0:
+                    if not self._press_running and pile >= start:
+                        self._press_running = True
+                    elif self._press_running and pile <= stop:
+                        self._press_running = False
+                # Capacity is counted whether or not the presses choose to run
+                # this hour - waiting for a pile is a policy, not a capacity
+                # limit, so utilisation stays honest (idle time shows as such).
                 for p, c in caps.items():
                     station_cap_sum[p] += c
+                if not self._press_running and sum(caps.values()) > EPS_M2:
+                    if held_now is not None:
+                        held_now.update(p for p, c in caps.items() if c > EPS_M2)
+                    caps = {p: 0.0 for p in caps}
+                total_cap = sum(caps.values())
                 pulled = queue.consume_flat_rate(min(total_cap, room)) if total_cap > EPS_M2 else []
                 made_all = sum(b.qty for b in pulled)
                 for p, c in caps.items():
@@ -902,6 +938,8 @@ class Simulator:
                     station_out_sum[p] += made_all * share
                     if util_now is not None:
                         util_now[p] = min(1.0, made_all * share / c) if c > EPS_M2 else 0.0
+                    if p not in out:
+                        out[p] = []
                 if blocked_now is not None and room < math.inf and made_all >= room - EPS_M2 and queue.total_m2() > EPS_M2:
                     blocked_now.update(p for p, c in caps.items() if c > EPS_M2)
                 for b in pulled:

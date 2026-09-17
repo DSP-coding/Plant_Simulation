@@ -360,6 +360,33 @@ theoretical), and manual sanding set equal to the CNC line's 10,000
 because sanding runs right behind the CNCs with the MB non-stop. Packing
 stays people-driven so absenteeism flows straight into its capacity.
 
+## Session 5c - protective buffers and press batching
+
+Per the plant: the Cefla is the production bottleneck after manual
+sanding, so the floor deliberately keeps WIP in front of the Cefla and in
+front of the presses at all times, running the Cefla to build a pile the
+presses then "smash out".
+
+- **Protective buffer targets** (`cfg.BUFFER_TARGET_M2_BY_QUEUE`, sidebar):
+  250 m² in front of the Cefla (~a shift of its work [ASSUMPTION]) and
+  50 m² in front of the presses ("never empty"). The constraints section
+  checks them every running hour and reports average / minimum / hours
+  below target / hours empty; those buffers are no longer flagged as
+  "waiting, not protection".
+- **Press batching** (`press_batch_start_m2` / `_stop_m2`, sidebar): the
+  presses wait for the pile to reach 300 m² [ASSUMPTION], run until it is
+  down to 50, then wait again. Idle-by-choice hours are reported as "held"
+  (a policy, not a capacity limit) and press capacity is still counted, so
+  press utilisation reads ~33% rather than a false 99%.
+
+**What the model says at the median month:** the pile in front of the
+Cefla does NOT build (avg ~29 m², below target every hour) - with the
+overview's capacities the Cefla (9,000 m²/month) out-runs everything
+feeding it, and at ~5,900 m²/month of Thermo intake nothing upstream is
+running ahead of it. In other words the model does not yet see the Cefla
+as a bottleneck at all (69% utilised), which contradicts the floor's
+experience - see open question 0g.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -375,6 +402,12 @@ stays people-driven so absenteeism flows straight into its capacity.
 0b. ~~Cut & Clash DIFOT is 43%~~ **Resolved (session 4)** by the real
    roster: with Nirmal on 1536 days, Cut & Clash runs at 100% DIFOT and
    3.5-day lead time.
+0g. **Why does the floor see the Cefla as a bottleneck?** In the model it
+   runs at ~69% (9,000 m²/month capacity vs ~5,900 of Thermo intake) and
+   never backs up. Either its real throughput is lower than 9,000 (glue
+   changeovers, downtime, one-person running?), or CNC/sanding output
+   arrives in bursts. A few days of actual Cefla m²-per-shift from the
+   scan data would settle it and let the buffer target be set properly.
 0f. **How fast does a second CNC really run** when one person tends two?
    Currently 80% of a fully-tended machine, regardless of series.
 0e. **What share of Thermo intake is a special order?** Currently a 10%

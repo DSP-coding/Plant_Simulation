@@ -704,6 +704,30 @@ class ConstraintsTests(unittest.TestCase):
         self.assertGreater(r.station_blocked_hours["cnc_thermo"], 0)
         self.assertLessEqual(max(t["buf"]["sanding"] for t in r.trace), 5.0 + 1e-6)
 
+    def test_press_batching_waits_for_a_pile(self):
+        base = settings(horizon="week", mix_pct={"S1": 100.0})
+        batched = SimulationSettings(**{**vars(base), "press_batch_start_m2": 60.0, "press_batch_stop_m2": 5.0})
+        r = Simulator(tiny_roster(), batched).run()
+        self.assertGreater(r.station_held_hours["press_1"], 0)          # presses waited for the pile
+        levels = [t["buf"]["press_1"] for t in r.trace if "press_1" in t["active"]]
+        self.assertGreater(max(levels), 60.0 - 1e-6)                    # the pile built up to the start level
+        self.assertGreater(r.cum_completed_m2, 0)
+        continuous = SimulationSettings(**{**vars(base), "press_batch_start_m2": 0.0})
+        r2 = Simulator(tiny_roster(), continuous).run()
+        self.assertEqual(r2.station_held_hours["press_1"], 0)
+        with self.assertRaises(ValueError):
+            SimulationSettings(press_batch_start_m2=50.0, press_batch_stop_m2=60.0)
+
+    def test_protective_buffers_are_reported(self):
+        r = Simulator(real_roster(), settings(horizon="week", warmup_days=cfg.SIMULATION_WARMUP_DAYS)).run()
+        rep = analyse(r, real_roster())
+        pbs = {pb.queue: pb for pb in rep.by_route[cfg.Route.THERMO].protective_buffers}
+        self.assertEqual(set(pbs), {"edging", cfg.PRESS_QUEUE_ID})
+        for pb in pbs.values():
+            self.assertGreater(pb.hours_checked, 0)
+            self.assertLessEqual(pb.hours_below_target, pb.hours_checked)
+        self.assertEqual(rep.by_route[cfg.Route.CUT_AND_CLASH].protective_buffers, [])
+
     def test_presses_share_the_pile(self):
         r = Simulator(real_roster(), settings(horizon="week", warmup_days=cfg.SIMULATION_WARMUP_DAYS)).run()
         u1, u2 = r.station_utilisation["press_1"], r.station_utilisation["press_2"]

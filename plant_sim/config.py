@@ -612,6 +612,23 @@ DEFAULT_BUFFER_CAP_M2 = 5000.0
 #   BUFFER_CAP_M2_BY_STATION = {"mb_sander": 120.0, "press": 200.0}
 BUFFER_CAP_M2_BY_STATION: dict[str, float] = {}
 
+# [REAL, per the plant] PROTECTIVE buffers: the floor deliberately keeps WIP
+# in front of the Cefla (the production bottleneck after manual sanding)
+# and in front of the presses at all times - the Cefla is run to build a
+# pile the presses can then "smash out". These are the target levels, in
+# m2, the constraints analysis checks each hour the receiving station is
+# running. [ASSUMPTION] the amounts: ~a shift of Cefla work in front of the
+# Cefla; in front of the presses "never empty" = the level the press batch
+# run stops at (below). Edit in the sidebar.
+BUFFER_TARGET_M2_BY_QUEUE: dict[str, float] = {"edging": 250.0, PRESS_QUEUE_ID: 50.0}
+
+# [REAL, per the plant] the presses run in BATCHES: they wait for the pile
+# in front of them to build, then run until it is nearly empty. Start = pile
+# size that triggers a run, stop = level at which the run ends (0 start =
+# presses run continuously). [ASSUMPTION] the two numbers.
+DEFAULT_PRESS_BATCH_START_M2 = 300.0
+DEFAULT_PRESS_BATCH_STOP_M2 = 50.0     # stop with a little left so the pile is never empty
+
 # [SIMULATION METHODOLOGY, not a plant fact] Every run starts with every
 # queue completely empty - the real factory never does; it always has
 # work-in-progress already sitting at every station. Without a warm-up, the

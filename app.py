@@ -207,8 +207,22 @@ with st.sidebar:
                                         "in total - the results tab shows what this setting produces.")
 
     st.divider()
-    st.header("Buffer space limits")
-    with st.expander("WIP limits in front of each station (m²)", expanded=False):
+    st.header("Buffers & press batching")
+    st.caption("The floor keeps WIP in front of the Cefla and the presses on purpose, and runs the presses "
+               "in batches once a pile has built. The analysis checks these targets every running hour.")
+    buffer_targets_m2 = {
+        "edging": st.number_input("Target WIP in front of Cefla (m²)", 0.0, 5000.0,
+                                  cfg.BUFFER_TARGET_M2_BY_QUEUE.get("edging", 0.0), step=10.0),
+        cfg.PRESS_QUEUE_ID: st.number_input("Target WIP in front of the presses (m²)", 0.0, 5000.0,
+                                            cfg.BUFFER_TARGET_M2_BY_QUEUE.get(cfg.PRESS_QUEUE_ID, 0.0), step=10.0),
+    }
+    press_batch_start_m2 = st.number_input("Presses start a run at (m² in the pile; 0 = run continuously)", 0.0, 5000.0,
+                                           cfg.DEFAULT_PRESS_BATCH_START_M2, step=10.0)
+    press_batch_stop_m2 = st.number_input("...and stop when the pile is down to (m²)", 0.0, 5000.0,
+                                          cfg.DEFAULT_PRESS_BATCH_STOP_M2, step=10.0)
+    if press_batch_start_m2 > 0 and press_batch_stop_m2 >= press_batch_start_m2:
+        settings_problems.append("Press batching: the stop level must be below the start level.")
+    with st.expander("WIP space limits in front of each station (m²)", expanded=False):
         st.caption("Real rack / trolley space. 0 = no limit. A station whose downstream buffer is "
                    "full stops (\"blocked\") - the constraints analysis reports those hours.")
         buffer_caps_m2 = {}
@@ -241,6 +255,8 @@ def run_simulation() -> None:
             special_order_pct=special_order_pct,
             sick_enabled=sick_enabled, random_seed=int(seed),
             buffer_caps_m2={q: v for q, v in buffer_caps_m2.items() if v > 0},
+            buffer_targets_m2={q: v for q, v in buffer_targets_m2.items() if v > 0},
+            press_batch_start_m2=press_batch_start_m2, press_batch_stop_m2=press_batch_stop_m2,
         )
         with st.spinner("Simulating..."):
             st.session_state.sim_result = Simulator(roster, settings).run()
@@ -534,6 +550,7 @@ with tab_results:
                     "Starved h": round(r.starved_h),
                     "Unstaffed h": round(r.unstaffed_h),
                     "Blocked h": round(r.blocked_h),
+                    "Held h": round(r.held_h),
                     "Queue start→end m²": f"{r.queue_start_m2:,.0f} → {r.queue_end_m2:,.0f}",
                     "Buffer (h of work)": round(r.buffer_avg_h, 1),
                     "Headroom m²/wk": round(r.headroom_m2_per_week),
@@ -544,6 +561,23 @@ with tab_results:
                                           index=[short_station_label(r.station) for r in rc.rows]))
                 for n in rc.buffer_notes:
                     st.caption("• " + n)
+                if rc.protective_buffers:
+                    st.markdown("**Protective buffers** (kept stocked on purpose - checked every running hour)")
+                    st.dataframe(pd.DataFrame([{
+                        "Buffer": pb.label,
+                        "Target m²": round(pb.target_m2),
+                        "Average m²": round(pb.avg_m2),
+                        "Min m²": round(pb.min_m2),
+                        "Hours below target": f"{pb.hours_below_target:.0f} of {pb.hours_checked:.0f}",
+                        "Hours empty": round(pb.hours_empty),
+                        "OK": "✅" if pb.ok else "⚠️",
+                    } for pb in rc.protective_buffers]), width="stretch", hide_index=True)
+                    for pb in rc.protective_buffers:
+                        if not pb.ok:
+                            st.caption(f"⚠️ WIP {pb.label} was below its {pb.target_m2:.0f} m² target for "
+                                       f"{pb.hours_below_target:.0f} of {pb.hours_checked:.0f} running hours"
+                                       + (f" and empty for {pb.hours_empty:.0f}" if pb.hours_empty else "")
+                                       + " - the station before it isn't building the pile fast enough.")
 
                 if rc.policy_constraints:
                     st.markdown("**Policy constraints** (things utilisation can't show)")

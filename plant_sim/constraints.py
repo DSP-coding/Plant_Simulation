@@ -57,6 +57,7 @@ class StationRow:
     starved_h: float                  # staffed, nothing to do
     blocked_h: float                  # downstream buffer full
     flat_out_h: float                 # staffed, worked, still couldn't clear the queue
+    held_h: float                     # staffed but idle by policy (press batching)
     queue_start_m2: float
     queue_end_m2: float
     queue_avg_m2: float
@@ -87,6 +88,25 @@ class Suggestion:
 
 
 @dataclass
+class ProtectiveBuffer:
+    """A buffer the floor deliberately keeps stocked (in front of the Cefla,
+    in front of the presses) - checked against its target every hour the
+    receiving station runs."""
+    queue: str
+    label: str
+    target_m2: float
+    avg_m2: float
+    min_m2: float
+    hours_checked: float
+    hours_below_target: float
+    hours_empty: float
+
+    @property
+    def ok(self) -> bool:
+        return self.hours_checked > 0 and self.hours_below_target / self.hours_checked <= 0.10
+
+
+@dataclass
 class RouteConstraints:
     route: str
     label: str
@@ -97,6 +117,7 @@ class RouteConstraints:
     external: bool                    # nothing is binding - demand below capacity
     policy_constraints: list[str]
     buffer_notes: list[str]
+    protective_buffers: list[ProtectiveBuffer]
     suggestions: list[Suggestion]
 
 
@@ -133,6 +154,7 @@ def analyse(result: SimulationResult, roster=None) -> ConstraintsReport:
             starved_h=result.station_starved_hours.get(sid, 0.0),
             blocked_h=result.station_blocked_hours.get(sid, 0.0),
             flat_out_h=result.station_flat_out_hours.get(sid, 0.0),
+            held_h=result.station_held_hours.get(sid, 0.0),
             queue_start_m2=q0, queue_end_m2=q1, queue_avg_m2=q_avg,
             queue_max_m2=result.station_queue_max_m2.get(sid, 0.0),
             capacity_m2_per_h=cap_h,
@@ -160,7 +182,8 @@ def analyse(result: SimulationResult, roster=None) -> ConstraintsReport:
             route=route, label=label, rows=rows, constraint=constraint, next_constraint=next_c,
             kind=kind, external=constraint is None,
             policy_constraints=_policy_constraints(route, rows, result),
-            buffer_notes=_buffer_notes(rows, constraint, seq),
+            buffer_notes=_buffer_notes(rows, constraint, seq, set(s.buffer_targets_m2)),
+            protective_buffers=_protective_buffers(route, result),
             suggestions=_suggestions(route, rows, constraint, next_c, result, roster, weeks),
         )
 
@@ -201,6 +224,10 @@ def _policy_constraints(route: str, rows: list[StationRow], result: SimulationRe
         if r.blocked_h > 0:
             notes.append(f"{r.label}: blocked for {r.blocked_h:.0f} h because the buffer after it was full "
                          f"(a space limit, not a capacity limit).")
+        if r.held_h > 0:
+            notes.append(f"{r.label}: idle by choice for {r.held_h:.0f} h, waiting for the pile in front of it to "
+                         f"build before a batch run (press batching - start {result.settings.press_batch_start_m2:.0f} m², "
+                         f"stop {result.settings.press_batch_stop_m2:.0f} m²).")
     if route == cfg.Route.THERMO:
         lanes = result.cnc_thermo_lanes
         if lanes.get("c6_unmanned_hours", 0) > 0:
@@ -214,7 +241,33 @@ def _policy_constraints(route: str, rows: list[StationRow], result: SimulationRe
 # Buffers
 # ---------------------------------------------------------------------------
 
-def _buffer_notes(rows: list[StationRow], constraint: StationRow | None, seq: list[str]) -> list[str]:
+def _protective_buffers(route: str, result: SimulationResult) -> list[ProtectiveBuffer]:
+    """Check each deliberately-kept buffer against its target, hour by hour,
+    while the station it feeds is running."""
+    s = result.settings
+    out = []
+    for qid, target in s.buffer_targets_m2.items():
+        if qid == cfg.PRESS_QUEUE_ID:
+            feeds, label = list(cfg.PRESS_STATIONS), "in front of the presses"
+        else:
+            feeds, label = [qid], f"in front of {cfg.STATIONS[qid].label}"
+        st_route = cfg.STATIONS[feeds[0]].route
+        if st_route != route:
+            continue
+        levels = [t["buf"].get(feeds[0], 0.0) for t in result.trace if any(f in t.get("active", []) for f in feeds)]
+        if not levels:
+            continue
+        out.append(ProtectiveBuffer(
+            queue=qid, label=label, target_m2=target,
+            avg_m2=sum(levels) / len(levels), min_m2=min(levels), hours_checked=float(len(levels)),
+            hours_below_target=float(sum(1 for v in levels if v < target)),
+            hours_empty=float(sum(1 for v in levels if v <= 1e-6)),
+        ))
+    return out
+
+
+def _buffer_notes(rows: list[StationRow], constraint: StationRow | None, seq: list[str],
+                  protected: set[str] = frozenset()) -> list[str]:
     notes = []
     if constraint is not None and not constraint.shared:
         if constraint.buffer_avg_h < THIN_BUFFER_HOURS:
@@ -228,6 +281,8 @@ def _buffer_notes(rows: list[StationRow], constraint: StationRow | None, seq: li
     for r in rows:
         if constraint is not None and r.station == constraint.station:
             continue
+        if cfg.queue_id_for(r.station) in protected:
+            continue                       # kept stocked on purpose - reported under protective buffers
         if r.buffer_avg_h >= FAT_BUFFER_HOURS:
             notes.append(f"{r.label} has {r.buffer_avg_h:.0f} h of work waiting on average - that is lead time, "
                          f"not protection; the station before it is running ahead of what {r.label} can take.")
