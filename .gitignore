@@ -4,3 +4,4 @@
 !.streamlit/config.toml
 *.csv.tmp
 
+data/backups/

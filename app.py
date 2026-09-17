@@ -25,6 +25,7 @@ from plant_sim import config as cfg
 from plant_sim.constraints import analyse as analyse_constraints
 from plant_sim.floor_editor import apply_move, floor_editor, restore, snapshot
 from plant_sim.floor_view import build_floor_html
+from plant_sim import persist
 from plant_sim.simulation import Simulator, SimulationSettings
 from plant_sim.staff import Operator, Roster, RosterError
 from plant_sim.theme import apply_theme, brand_footer, brand_header, label
@@ -80,6 +81,39 @@ if "floor_last_seq" not in st.session_state:
 
 roster: Roster = st.session_state.roster
 
+if "roster_backed_up" not in st.session_state:
+    st.session_state.roster_backed_up = False
+if "saved_settings" not in st.session_state:
+    st.session_state.saved_settings = persist.load_settings()
+
+
+def persist_roster() -> None:
+    """Write the roster straight back to its CSV (first change of the
+    session takes a timestamped backup first)."""
+    if roster.problems():
+        return                                   # never persist a roster the app can't reload
+    if not st.session_state.roster_backed_up:
+        persist.backup_roster(ROSTER_CSV_PATH)
+        st.session_state.roster_backed_up = True
+    try:
+        roster.to_csv(ROSTER_CSV_PATH)
+    except OSError as e:
+        st.error(f"Could not save the roster to {ROSTER_CSV_PATH}: {e}")
+
+
+SETTING_DEFAULTS: dict[str, object] = {}
+
+
+def seed(key: str, default):
+    """Give a sidebar widget its starting value: what was saved last time
+    (if the user had changed it), else the current config default. Widgets
+    are created with key= only - the value lives in session_state."""
+    SETTING_DEFAULTS[key] = default
+    if key not in st.session_state:
+        st.session_state[key] = persist.seeded_value(key, default, st.session_state.saved_settings)
+    return st.session_state[key]
+
+
 brand_header("Plant Simulator")
 st.markdown("# Plan the floor before it happens.")
 st.caption(
@@ -95,7 +129,8 @@ settings_problems: list[str] = []
 
 with st.sidebar:
     st.header("Order intake & target")
-    horizon = st.selectbox("Horizon", list(cfg.HORIZON_DAYS.keys()), index=2,
+    seed("horizon", "month")
+    horizon = st.selectbox("Horizon", list(cfg.HORIZON_DAYS.keys()), key="horizon",
                            help="day = 1 Monday, week = 7 days from Monday, month = 30 days from Monday")
 
     # The intake number means "total m2 FOR THE SELECTED HORIZON" - i.e. if
@@ -104,8 +139,8 @@ with st.sidebar:
     # switching horizons doesn't silently reinterpret your number.
     intake_key = f"intake_m2_{horizon}"
     horizon_stats = cfg.REAL_INTAKE_M2[horizon]["combined"]
-    if intake_key not in st.session_state:
-        st.session_state[intake_key] = horizon_stats["median"]
+    for h in cfg.HORIZON_DAYS:
+        seed(f"intake_m2_{h}", cfg.REAL_INTAKE_M2[h]["combined"]["median"])
 
     st.caption(f"Presets from real order data ({INTAKE_SOURCE[horizon]}) for a typical **{horizon}**. "
                f"Orders arrive on weekdays between hour {cfg.INTAKE_WINDOW_HOURS[0]:.0f} and "
@@ -115,11 +150,9 @@ with st.sidebar:
         st.session_state[intake_key] = horizon_stats["median"]
     if preset_cols[1].button(f"Busiest {horizon} ({horizon_stats['max']:.0f} m²)"):
         st.session_state[intake_key] = horizon_stats["max"]
-
-    # NOTE: no `value=` here - the widget's value lives entirely in
-    # st.session_state[intake_key] (initialised above), since Streamlit
-    # forbids passing `value=` together with a `key=` that other widgets
-    # (the preset buttons) also write to.
+    # NOTE: no `value=` on any keyed widget below - each value lives in
+    # st.session_state (seeded from the saved settings file), which is also
+    # what lets the preset buttons above write to the intake box.
     intake_m2_for_horizon = st.number_input(f"Intake (m² / {horizon})", min_value=0.0, step=10.0,
                                              key=intake_key)
 
@@ -127,11 +160,12 @@ with st.sidebar:
                "Thermo's target/DIFOT is measured in WORKING days (Mon-Fri, weekends "
                "excluded), matching the real lead-time dashboard; Cut & Clash still "
                "uses calendar days pending confirmation of its measurement basis.")
-    target_lead_thermo = st.number_input("Target lead time - Thermo (working days)", min_value=0.0,
-                                          value=cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.THERMO], step=0.5)
+    seed("target_thermo", cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.THERMO])
+    seed("target_cutclash", cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.CUT_AND_CLASH])
+    target_lead_thermo = st.number_input("Target lead time - Thermo (working days)", min_value=0.0, step=0.5,
+                                          key="target_thermo")
     target_lead_cutclash = st.number_input("Target lead time - Cut & Clash (calendar days)", min_value=0.0,
-                                            value=cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.CUT_AND_CLASH],
-                                            step=0.5)
+                                            step=0.5, key="target_cutclash")
     target_lead_days = {cfg.Route.THERMO: target_lead_thermo, cfg.Route.CUT_AND_CLASH: target_lead_cutclash}
 
     st.divider()
@@ -147,10 +181,9 @@ with st.sidebar:
     capacity_order = ["cnc_thermo", "sanding", "mb_sander", "press_1", "press_2", "edging",
                        "despatch", "optimising", "cnc_1536", "edge_bander", "drilling"]
     for sid in capacity_order:
-        default_val = round(cfg.default_station_capacity_m2_per_month(sid), 0)
+        seed(f"cap_{sid}", float(round(cfg.default_station_capacity_m2_per_month(sid), 0)))
         station_capacity_m2_per_month[sid] = st.number_input(
-            f"{station_label(sid)}", min_value=0.0, value=default_val, step=100.0,
-            key=f"cap_{sid}")
+            f"{station_label(sid)}", min_value=0.0, step=100.0, key=f"cap_{sid}")
 
     st.divider()
     st.header("Product mix (%)")
@@ -159,9 +192,8 @@ with st.sidebar:
                "Series Mix by Month.xlsx.")
     mix_pct = {}
     for cls, pc in cfg.PRODUCT_CLASSES.items():
-        mix_pct[cls] = st.number_input(f"{pc.label}", min_value=0.0, max_value=100.0,
-                                        value=round(cfg.DEFAULT_MIX_PCT[cls], 2), step=0.1,
-                                        key=f"mix_{cls}")
+        seed(f"mix_{cls}", float(round(cfg.DEFAULT_MIX_PCT[cls], 2)))
+        mix_pct[cls] = st.number_input(f"{pc.label}", min_value=0.0, max_value=100.0, step=0.1, key=f"mix_{cls}")
     mix_sum = sum(mix_pct.values())
     if mix_sum <= 0:
         settings_problems.append("Product mix: at least one class needs a share above 0%.")
@@ -176,13 +208,14 @@ with st.sidebar:
     shift_schedules = {}
     for crew_name, default_sched in cfg.DEFAULT_SHIFT_SCHEDULES.items():
         with st.expander(f"{crew_name} crew", expanded=False):
-            days = st.slider("Days/week", 0, 7, default_sched.days_per_week, key=f"{crew_name}_days")
-            day_hrs = st.number_input("Day shift hours", 0.0, 24.0, default_sched.day_hrs,
-                                       key=f"{crew_name}_dayhrs")
-            aft_enabled = st.checkbox("Afternoon shift enabled", default_sched.aft_enabled,
-                                       key=f"{crew_name}_aftenabled")
-            aft_hrs = st.number_input("Afternoon shift hours", 0.0, 24.0, default_sched.aft_hrs,
-                                       key=f"{crew_name}_afthrs")
+            seed(f"{crew_name}_days", int(default_sched.days_per_week))
+            seed(f"{crew_name}_dayhrs", float(default_sched.day_hrs))
+            seed(f"{crew_name}_aftenabled", bool(default_sched.aft_enabled))
+            seed(f"{crew_name}_afthrs", float(default_sched.aft_hrs))
+            days = st.slider("Days/week", 0, 7, key=f"{crew_name}_days")
+            day_hrs = st.number_input("Day shift hours", 0.0, 24.0, key=f"{crew_name}_dayhrs")
+            aft_enabled = st.checkbox("Afternoon shift enabled", key=f"{crew_name}_aftenabled")
+            aft_hrs = st.number_input("Afternoon shift hours", 0.0, 24.0, key=f"{crew_name}_afthrs")
             try:
                 shift_schedules[crew_name] = cfg.ShiftSchedule(days, day_hrs, aft_enabled, aft_hrs)
             except ValueError as e:
@@ -191,16 +224,19 @@ with st.sidebar:
 
     st.divider()
     st.header("Remakes & special orders")
-    special_order_pct = st.number_input("Special orders (% of Thermo intake)", 0.0, 100.0,
-                                        cfg.DEFAULT_SPECIAL_ORDER_PCT, step=1.0,
+    seed("special_pct", float(cfg.DEFAULT_SPECIAL_ORDER_PCT))
+    seed("remake_enabled", True)
+    seed("remake_rate", float(cfg.DEFAULT_REMAKE_RATE_PCT))
+    seed("remake_days", float(cfg.DEFAULT_REMAKE_DAYS))
+    special_order_pct = st.number_input("Special orders (% of Thermo intake)", 0.0, 100.0, step=1.0,
+                                        key="special_pct",
                                         help=f"Non-standard Thermo work. Specials and remakes are cut on "
                                              f"{cfg.CNC_THERMO_SPECIAL_MACHINE} first; the other CNCs cut regular "
                                              "work first. The real share isn't known yet - this default is a guess.")
-    remake_enabled = st.checkbox("Enable remake loop", value=True)
-    remake_rate_pct = st.number_input("Remake rate (% of packing output)", 0.0, 100.0,
-                                       cfg.DEFAULT_REMAKE_RATE_PCT, step=0.1)
-    remake_days = st.number_input("Remake hold before re-entering the line (days)", 0.0, 30.0,
-                                   cfg.DEFAULT_REMAKE_DAYS, step=0.1,
+    remake_enabled = st.checkbox("Enable remake loop", key="remake_enabled")
+    remake_rate_pct = st.number_input("Remake rate (% of packing output)", 0.0, 100.0, step=0.1, key="remake_rate")
+    remake_days = st.number_input("Remake hold before re-entering the line (days)", 0.0, 30.0, step=0.1,
+                                   key="remake_days",
                                    help="Remakes keep their original order date, so they jump the "
                                         "queue on their second pass. The real dashboard says remakes "
                                         f"take {cfg.REAL_REMAKE_LEAD_PENALTY_DAYS} working days longer "
@@ -210,16 +246,19 @@ with st.sidebar:
     st.header("Buffers & press batching")
     st.caption("The floor keeps WIP in front of the Cefla and the presses on purpose, and runs the presses "
                "in batches once a pile has built. The analysis checks these targets every running hour.")
+    seed("buf_target_edging", float(cfg.BUFFER_TARGET_M2_BY_QUEUE.get("edging", 0.0)))
+    seed("buf_target_press", float(cfg.BUFFER_TARGET_M2_BY_QUEUE.get(cfg.PRESS_QUEUE_ID, 0.0)))
+    seed("press_start", float(cfg.DEFAULT_PRESS_BATCH_START_M2))
+    seed("press_stop", float(cfg.DEFAULT_PRESS_BATCH_STOP_M2))
     buffer_targets_m2 = {
-        "edging": st.number_input("Target WIP in front of Cefla (m²)", 0.0, 5000.0,
-                                  cfg.BUFFER_TARGET_M2_BY_QUEUE.get("edging", 0.0), step=10.0),
-        cfg.PRESS_QUEUE_ID: st.number_input("Target WIP in front of the presses (m²)", 0.0, 5000.0,
-                                            cfg.BUFFER_TARGET_M2_BY_QUEUE.get(cfg.PRESS_QUEUE_ID, 0.0), step=10.0),
+        "edging": st.number_input("Target WIP in front of Cefla (m²)", 0.0, 5000.0, step=10.0, key="buf_target_edging"),
+        cfg.PRESS_QUEUE_ID: st.number_input("Target WIP in front of the presses (m²)", 0.0, 5000.0, step=10.0,
+                                            key="buf_target_press"),
     }
-    press_batch_start_m2 = st.number_input("Presses start a run at (m² in the pile; 0 = run continuously)", 0.0, 5000.0,
-                                           cfg.DEFAULT_PRESS_BATCH_START_M2, step=10.0)
-    press_batch_stop_m2 = st.number_input("...and stop when the pile is down to (m²)", 0.0, 5000.0,
-                                          cfg.DEFAULT_PRESS_BATCH_STOP_M2, step=10.0)
+    press_batch_start_m2 = st.number_input("Presses start a run at (m² in the pile; 0 = run continuously)",
+                                           0.0, 5000.0, step=10.0, key="press_start")
+    press_batch_stop_m2 = st.number_input("...and stop when the pile is down to (m²)", 0.0, 5000.0, step=10.0,
+                                          key="press_stop")
     if press_batch_start_m2 > 0 and press_batch_stop_m2 >= press_batch_start_m2:
         settings_problems.append("Press batching: the stop level must be below the start level.")
     with st.expander("WIP space limits in front of each station (m²)", expanded=False):
@@ -229,15 +268,32 @@ with st.sidebar:
         for qid in ["cnc_thermo", "sanding", "mb_sander", "edging", cfg.PRESS_QUEUE_ID, "despatch",
                     "optimising", "cnc_1536", "edge_bander", "drilling"]:
             lbl = "Press (shared pile)" if qid == cfg.PRESS_QUEUE_ID else station_label(qid)
-            default_cap = cfg.BUFFER_CAP_M2_BY_STATION.get(qid, 0.0)
-            buffer_caps_m2[qid] = st.number_input(f"Before {lbl}", min_value=0.0, value=float(default_cap),
-                                                  step=10.0, key=f"buf_{qid}")
+            seed(f"buf_{qid}", float(cfg.BUFFER_CAP_M2_BY_STATION.get(qid, 0.0)))
+            buffer_caps_m2[qid] = st.number_input(f"Before {lbl}", min_value=0.0, step=10.0, key=f"buf_{qid}")
 
     st.divider()
     st.header("Sick leave")
-    sick_enabled = st.checkbox("Enable random sick leave (per-person rate, edit in Staff tab)",
-                                value=False)
-    seed = st.number_input("Random seed (change to reroll)", value=42, step=1)
+    seed("sick_enabled", False)
+    seed("seed", 42)
+    sick_enabled = st.checkbox("Enable random sick leave (per-person rate, edit in Staff tab)", key="sick_enabled")
+    seed_value = st.number_input("Random seed (change to reroll)", step=1, key="seed")
+
+    st.divider()
+    # -- persist the sidebar: saved whenever anything changes, restored next open --
+    current_values = {k: st.session_state[k] for k in SETTING_DEFAULTS}
+    if current_values != st.session_state.saved_settings.get("values"):
+        try:
+            persist.save_settings(current_values, SETTING_DEFAULTS)
+            st.session_state.saved_settings = {"values": dict(current_values), "defaults": dict(SETTING_DEFAULTS)}
+        except OSError as e:
+            st.warning(f"Could not save settings: {e}")
+    st.caption(f"Settings are saved automatically to `{persist.SETTINGS_PATH}` and restored next time.")
+    if st.button("Reset all settings to config.py defaults"):
+        persist.clear_settings()
+        for k in list(SETTING_DEFAULTS):
+            st.session_state.pop(k, None)
+        st.session_state.saved_settings = {"values": {}, "defaults": {}}
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +309,7 @@ def run_simulation() -> None:
             station_capacity_m2_per_month=station_capacity_m2_per_month,
             remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,
             special_order_pct=special_order_pct,
-            sick_enabled=sick_enabled, random_seed=int(seed),
+            sick_enabled=sick_enabled, random_seed=int(seed_value),
             buffer_caps_m2={q: v for q, v in buffer_caps_m2.items() if v > 0},
             buffer_targets_m2={q: v for q, v in buffer_targets_m2.items() if v > 0},
             press_batch_start_m2=press_batch_start_m2, press_batch_stop_m2=press_batch_stop_m2,
@@ -297,6 +353,7 @@ with tab_floor:
         if described:
             st.session_state.roster_history.append((described, before))
             st.session_state.roster_history = st.session_state.roster_history[-30:]
+            persist_roster()
             st.rerun()
 
     ctl1, ctl2, ctl3 = st.columns([1, 1, 3])
@@ -306,6 +363,7 @@ with tab_floor:
     if ctl2.button(f"↶ Undo last move ({len(history)})", disabled=not history, key="undo_floor"):
         described, before = history.pop()
         restore(roster, before)
+        persist_roster()
         st.rerun()
     if history:
         ctl3.caption("Recent moves: " + " · ".join(d for d, _ in history[-4:]))
@@ -369,14 +427,15 @@ with tab_staff:
             op.absence_rate_pct = new_absence
             op.skills = set(new_skills)
             op.notes = st.session_state[f"notes_{op.id}"]
-            st.success(f"Updated {op.name}.")
+            persist_roster()
+            st.success(f"Updated {op.name} (saved).")
             # No explicit st.rerun() here: the button click itself already
             # triggers a rerun, so the mutation above is reflected as soon as
             # this script run finishes rendering - an extra rerun would just
             # wipe this success message before it's shown.
         if btn_remove.button(f"Remove {op.name} from roster"):
             roster.remove(op.id)
-            st.success(f"Removed {op.name} (not saved to CSV until you click Save).")
+            persist_roster()
             st.rerun()
 
     st.divider()
@@ -395,23 +454,27 @@ with tab_staff:
             else:
                 roster.add(Operator(id=new_id, name=new_name, home_station=add_home,
                                      shift=add_shift, absence_rate_pct=add_absence))
-                st.success(f"Added {new_name}.")
+                persist_roster()
                 st.rerun()
 
-    save_col, reload_col = st.columns(2)
-    if save_col.button("💾 Save roster to CSV"):
-        problems = roster.problems()
-        if problems:
-            st.error("Not saved - fix these first:\n\n- " + "\n- ".join(problems))
-        else:
+    st.caption(f"Every change to staff is saved straight to `{ROSTER_CSV_PATH}`. The first change of each "
+               f"session takes a backup first (last {persist.ROSTER_BACKUPS_TO_KEEP} kept).")
+    backups = persist.list_backups()
+    if backups:
+        b1, b2 = st.columns([3, 1])
+        chosen = b1.selectbox("Restore the roster from a backup", backups, format_func=persist.backup_label,
+                              key="restore_backup")
+        if b2.button("Restore", key="restore_backup_btn"):
             try:
-                roster.to_csv(ROSTER_CSV_PATH)
-                st.success(f"Saved {len(roster.operators)} staff to {ROSTER_CSV_PATH}")
-            except OSError as e:
-                st.error(f"Could not write {ROSTER_CSV_PATH}: {e}")
-    if reload_col.button("↺ Reload roster from CSV (discard unsaved edits)"):
-        st.session_state.roster = load_roster()
-        st.rerun()
+                restored = Roster.from_csv(chosen)
+            except RosterError as e:
+                st.error(f"That backup can't be loaded:\n\n```\n{e}\n```")
+            else:
+                st.session_state.roster = restored
+                st.session_state.roster_history = []
+                roster = restored
+                persist_roster()
+                st.rerun()
 
 with tab_results:
     if settings_problems:

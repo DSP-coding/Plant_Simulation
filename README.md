@@ -65,9 +65,12 @@ plant_sim/floor_view.py    The live animated factory-floor visualization (playba
 plant_sim/floor_editor.py  The drag-and-drop floor (Streamlit component wrapper + move rule)
 plant_sim/floor_editor/    ...and its single-file HTML/JS front end (no build step)
 plant_sim/constraints.py   Theory-of-Constraints read-out of a run (bottleneck, buffers, staff utilisation, improvements)
+plant_sim/persist.py       Saves staff changes to the roster CSV (with backups) and sidebar settings to data/app_settings.json
 plant_sim/theme.py         Dezignatek brand styling (teal/navy, fonts, wordmark header, footer)
 .streamlit/config.toml     Streamlit theme colours (dark, teal primary) - committed on purpose
-data/staff_roster.csv      The actual roster - names, skills, shifts, absence rates
+data/staff_roster.csv      The actual roster - names, skills, shifts, absence rates (auto-saved by the app)
+data/app_settings.json     Your sidebar settings, auto-saved by the app (delete it, or use the Reset button, to go back to config.py defaults)
+data/backups/              Timestamped roster backups (last 20; not committed)
 tests/test_plant_sim.py    Regression tests (python -m unittest discover -s tests)
 ```
 
@@ -155,7 +158,10 @@ streamlit run app.py
 Tab 1 (Factory Floor) is the drag-and-drop floor: move people between
 stations and shifts, Run, and read the KPI strip underneath. Tab 2 (Staff
 & Skills) edits the finer details (skills, absence rates, add/remove
-people) and saves the roster to CSV. Tab 3 (Simulation Results) shows the
+people). Everything you change is saved as you go: staff changes go
+straight to `data/staff_roster.csv` (a backup is taken first; restore one
+from the Staff tab), sidebar settings to `data/app_settings.json` - so the
+app opens where you left it. Tab 3 (Simulation Results) shows the
 full outcome: KPIs, a reality check against the real plant's monthly
 figures, staffing-gap warnings, the live factory-floor animation with
 names, lead-time/DIFOT by product range, station utilisation, and
