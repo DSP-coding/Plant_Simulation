@@ -830,6 +830,21 @@ class ConstraintsTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get("PLANT_SIM_UI_TESTS", "1") == "1", "UI tests disabled")
+class LauncherTests(unittest.TestCase):
+    """launch.py's port check (what the .bat / .exe launcher relies on)."""
+
+    def test_port_in_use_sees_a_listener_on_any_interface(self):
+        import socket
+        import launch
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+            srv.bind(("0.0.0.0", 0))
+            srv.listen(1)
+            port = srv.getsockname()[1]
+            self.assertTrue(launch.port_in_use(port))
+            self.assertNotEqual(launch.free_port(port), port)
+        self.assertFalse(launch.port_in_use(port))
+
+
 class AppSmokeTests(unittest.TestCase):
     """Runs the Streamlit app headlessly and clicks Run simulation."""
 

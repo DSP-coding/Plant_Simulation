@@ -2,7 +2,8 @@
 Build a portable, no-install ZIP of the Plant Simulator for Windows.
 
     dist\PlantSimulator\           the folder to share (or the ZIP next to it)
-        Plant Simulator.bat        double-click this
+        Plant Simulator.exe        double-click this (tray icon, no console window)
+        Plant Simulator.bat        ...or this, if the exe is blocked - same thing with a console
         runtime\                   a private, bundled Python with every package installed
         app.py, plant_sim\, data\, .streamlit\, launch.py, README.md ...
 
@@ -70,6 +71,7 @@ if ($LASTEXITCODE -ne 0) { throw "package install failed" }
 
 # -- 3. the app itself --------------------------------------------------------
 Write-Host "Copying the app"
+& (Join-Path $root "tools/build_launcher.ps1") -OutDir $stage      # "Plant Simulator.exe"
 Copy-Item (Join-Path $root "app.py") $stage
 Copy-Item (Join-Path $root "launch.py") $stage
 Copy-Item (Join-Path $root "Plant Simulator.bat") $stage
@@ -101,4 +103,4 @@ Compress-Archive -Path $stage -DestinationPath $zipOut -CompressionLevel Optimal
 $size = [math]::Round((Get-Item $zipOut).Length / 1MB)
 Write-Host ""
 Write-Host "Done. Share $zipOut ($size MB)."
-Write-Host "Recipients unzip it anywhere and double-click 'Plant Simulator.bat'."
+Write-Host "Recipients unzip it anywhere and double-click 'Plant Simulator.exe'."

@@ -456,6 +456,21 @@ went unscheduled.
   unzip and double-click - nothing to install. Requirements are now
   upper-bounded (`streamlit<1.51`, `pandas<3`, `altair<6`) so a fresh
   install gets the versions the tests run against.
+- `Plant Simulator.exe` (session 6b): a 28 KB native launcher compiled
+  from `tools/launcher/PlantSimulator.cs` by `tools/build_launcher.ps1`
+  with the `csc.exe` that ships in every Windows 10/11 (.NET Framework
+  4) - no SDK, so the portable build stays reproducible on any PC. It
+  runs the bundled Python hidden, captures its output to
+  `plant_simulator.log`, reads the URL off it, and lives in the tray
+  (Open / Show log / Stop). One instance per folder (a mutex keyed on
+  the folder; a second double-click re-opens the browser), and the
+  server is put in a kill-on-close job object so it dies with the exe
+  even via Task Manager. Found and fixed on the way: on Windows,
+  `launch.py`'s free-port check could bind 127.0.0.1:8501 while another
+  copy listened on 0.0.0.0:8501 - it now also probes with a connect and
+  binds 0.0.0.0 with SO_EXCLUSIVEADDRUSE. PyInstaller was considered
+  and rejected: Streamlit needs a pile of collection hooks, breaks on
+  dependency bumps, and one-file builds trip Defender/SmartScreen.
 
 ## Open questions (need your input, not guessable from data)
 

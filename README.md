@@ -56,6 +56,7 @@ breakdown of which is which today.
 
 ```
 Plant Simulator.bat        Double-click to run (no terminal); tools\ has the portable-ZIP builder
+tools/launcher/            Source of "Plant Simulator.exe" (C#, tray icon; compiled by tools/build_launcher.ps1)
 launch.py                  What the .bat runs: free port, Streamlit headless, opens the browser
 app.py                     Streamlit UI - the only file that "wires up" the screen
 plant_sim/config.py        Every constant: stations, rates, shifts, real-data references
@@ -170,10 +171,20 @@ you use it; close it to stop.
 **Giving it to someone else:** double-click `tools\Build portable package.bat`
 once. It builds `dist\PlantSimulator-<date>.zip` (~125 MB) containing a
 bundled Python runtime, every package, the app, the roster and your current
-settings. Send them the ZIP; they unzip it somewhere short (Desktop or
-Documents, not a deeply nested folder) and double-click `Plant Simulator.bat`
-inside - nothing to install, no admin rights, no internet needed after that.
-Their staff and settings changes are saved inside their own unzipped folder.
+settings, plus a native **`Plant Simulator.exe`** (built on the spot with the
+C# compiler that ships in Windows - no SDK). Send them the ZIP; they unzip it
+somewhere short (Desktop or Documents, not a deeply nested folder) and
+double-click `Plant Simulator.exe` inside - nothing to install, no admin
+rights, no internet needed after that. The exe runs the app hidden (no black
+window), opens the browser, and sits in the system tray: right-click it for
+*Open in browser*, *Show log* or *Stop*. Double-clicking it again just
+re-opens the browser. Their staff and settings changes are saved inside their
+own unzipped folder. (`Plant Simulator.bat` is in the ZIP too, as a fallback
+if a PC's policy blocks unknown exes - same thing, with a console window.)
+
+The exe is unsigned, so the first run on another PC shows a Windows
+SmartScreen "unknown publisher" notice (*More info → Run anyway*); a
+code-signing certificate would remove that.
 
 From a terminal it is still just:
 
