@@ -741,6 +741,16 @@ class CrewStartTests(unittest.TestCase):
         self.assertEqual(r.trace[8]["shift"]["cnc_thermo"], "day")
 
 
+class LeadTimeBasisTests(unittest.TestCase):
+    def test_both_routes_are_judged_in_working_days(self):
+        self.assertTrue(cfg.LEAD_TIME_EXCLUDES_WEEKENDS[cfg.Route.THERMO])
+        self.assertTrue(cfg.LEAD_TIME_EXCLUDES_WEEKENDS[cfg.Route.CUT_AND_CLASH])
+        sim = Simulator(tiny_roster(), settings(horizon="day"))
+        fri_noon, mon_noon = 4 * 24 + 6, 7 * 24 + 6
+        self.assertAlmostEqual(sim._days_elapsed(fri_noon, mon_noon, cfg.Route.CUT_AND_CLASH), 1.0)   # weekend not counted
+        self.assertAlmostEqual(sim._days_elapsed(fri_noon, mon_noon, cfg.Route.THERMO), 1.0)
+
+
 class SchedulingTests(unittest.TestCase):
     """Optimising's morning release: the 4pm order cut-off, the n-working-day
     scheduling lag, remakes waiting for the next morning, and what happens

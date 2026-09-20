@@ -515,6 +515,14 @@ Cefla / sanding protective-buffer read-outs in the TOC section to see it.
 Sidebar widget keys for crews are now `crew_<name>_*`; saved settings for
 the old crew names are simply ignored.
 
+**Session 7b**: Cut & Clash lead time / DIFOT switched to working days
+(open question 4 resolved). On the current saved roster at 9,500 m²:
+Cut & Clash 6.2 calendar days / 85% DIFOT -> 4.4 working days / 100%.
+Worth noting from the same run: the 1536 sits at 97% utilisation at
+9,500 m²/month, so Cut & Clash is at capacity - any more intake and its
+lead time climbs fast, which is what the earlier 9-day / 0% screenshot
+was showing on top of the wrong ruler.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -568,8 +576,11 @@ the old crew names are simply ignored.
    Nirmal runs it on days, Jerald on afternoons.
 3. **Edge Band/Drilling's real rate** - no matching checkpoint existed in
    the 3-month export; still a guess (6.5 m²/op-hr).
-4. **Cut & Clash's target lead time** - confirmed as 7 days, but working
-   days (like Thermo) or calendar days? Currently assumed calendar.
+4. ~~Cut & Clash's target lead time: working or calendar days?~~
+   **Resolved (session 7b, 21 Sep 2026)**: 7 WORKING days, like Thermo.
+   Judging it in calendar days made a 9-calendar-day lead (about 6.4
+   working days, i.e. on time) read as 0% DIFOT. Both routes now use
+   `_working_days_elapsed`.
 5. **The real SQL "Remake" business rule** - the naive "more than one
    Barcode per OrderID" logic was wrong (flagged 100% of rows); still
    need the actual definition to rebuild it in the lead-time SQL.

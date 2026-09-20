@@ -157,15 +157,14 @@ with st.sidebar:
     intake_m2_for_horizon = st.number_input(f"Intake (m² / {horizon})", min_value=0.0, step=10.0,
                                              key=intake_key)
 
-    st.caption("Cut & Clash (1536) quotes its own lead time, separate from Thermo. "
-               "Thermo's target/DIFOT is measured in WORKING days (Mon-Fri, weekends "
-               "excluded), matching the real lead-time dashboard; Cut & Clash still "
-               "uses calendar days pending confirmation of its measurement basis.")
+    st.caption("Cut & Clash (1536) quotes its own lead time, separate from Thermo. Both targets and "
+               "DIFOT are measured in WORKING days (Mon-Fri, weekends excluded), matching the real "
+               "lead-time dashboard.")
     seed("target_thermo", cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.THERMO])
     seed("target_cutclash", cfg.DEFAULT_TARGET_LEAD_DAYS[cfg.Route.CUT_AND_CLASH])
     target_lead_thermo = st.number_input("Target lead time - Thermo (working days)", min_value=0.0, step=0.5,
                                           key="target_thermo")
-    target_lead_cutclash = st.number_input("Target lead time - Cut & Clash (calendar days)", min_value=0.0,
+    target_lead_cutclash = st.number_input("Target lead time - Cut & Clash (working days)", min_value=0.0,
                                             step=0.5, key="target_cutclash")
     target_lead_days = {cfg.Route.THERMO: target_lead_thermo, cfg.Route.CUT_AND_CLASH: target_lead_cutclash}
 
@@ -554,8 +553,8 @@ with tab_results:
                   f"{result.station_utilisation[bottleneck] * 100:.0f}% utilised")
         c4.metric("Avg lead time (days)",
                   f"{result.overall_avg_lead_days:.1f}" if result.has_completions else "—",
-                  help="Blended across both ranges - Thermo is measured in working days, "
-                       "Cut & Clash in calendar days (see the per-range breakdown below).")
+                  help="Blended across both ranges, in working days (Mon-Fri) - see the "
+                       "per-range breakdown below.")
         c4.metric("DIFOT %", f"{result.overall_difot_pct:.0f}%" if result.has_completions else "—",
                   help="Share of completed m² that met its own range's target lead time - the "
                        "same definition as the real dashboard.")

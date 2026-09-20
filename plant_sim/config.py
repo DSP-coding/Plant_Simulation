@@ -645,18 +645,18 @@ REAL_REMAKE_LEAD_PENALTY_DAYS = 0.32   # 8.97 - 8.64, working days
 # harshly (10 working days spans ~14 calendar days across two weekends).
 DEFAULT_TARGET_LEAD_DAYS = {
     Route.THERMO: 10.0,
-    Route.CUT_AND_CLASH: 7.0,  # [REAL] per your instruction - still calendar days;
-    # Cut & Clash's target wasn't stated as "working days" the way Thermo's
-    # was, so leave as calendar days until confirmed otherwise.
+    Route.CUT_AND_CLASH: 7.0,  # [REAL] 7 WORKING days (confirmed 21 Sep 2026)
 }
 
 # Whether lead-time/DIFOT day-counts exclude weekends for a given route (see
 # Simulator._working_days_elapsed in simulation.py). [REAL] Thermo's dashboard
-# explicitly measures "working time... weekends excluded"; Cut & Clash's
-# measurement basis hasn't been confirmed, so it stays on plain calendar days.
+# explicitly measures "working time... weekends excluded"; [REAL] Cut & Clash's
+# 7-day promise is working days too (confirmed 21 Sep 2026 - it was being
+# judged in calendar days, which made a 9-calendar-day lead read as 0% DIFOT
+# against a 7-day target when it was really ~6.5 working days).
 LEAD_TIME_EXCLUDES_WEEKENDS = {
     Route.THERMO: True,
-    Route.CUT_AND_CLASH: False,
+    Route.CUT_AND_CLASH: True,
 }
 
 

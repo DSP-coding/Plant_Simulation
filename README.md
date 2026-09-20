@@ -38,7 +38,7 @@ breakdown of which is which today.
   on the real floor.
 - Reports completion %, DIFOT, and lead time **separately for Thermo and
   Cut & Clash**, each judged against its own real target (10 working days
-  for Thermo, 7 days for Cut & Clash) rather than one blended number that
+  for Thermo, 7 working days for Cut & Clash) rather than one blended number that
   hides which line is actually struggling.
 - Shows a live animated view of the factory floor (units flowing between
   stations, buffers filling and draining, who is on each station) alongside
@@ -161,8 +161,9 @@ questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
 - **DIFOT = on-time completed m² / completed m²**, the dashboard's
   definition. Work still inside the factory past its date is shown
   separately as *overdue backlog*.
-- **Thermo lead time is in working days** (Mon-Fri, exact to the hour);
-  Cut & Clash is in calendar days until its basis is confirmed.
+- **Lead times are in working days** for both ranges (Mon-Fri, exact to
+  the hour): Thermo's 10-day and Cut & Clash's 7-day promises are both
+  working-day promises.
 
 ## Running it
 
