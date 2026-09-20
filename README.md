@@ -145,10 +145,14 @@ questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
 - **Horizons**: day = one Monday, week = 7 days, month = 30 days. Every
   run is preceded by a 21-day warm-up so queues start at steady state;
   only the horizon is reported.
-- **Staffing is decided once per shift, per crew.** Each crew hands over
-  from day to afternoon at its own shift length; a cross-skilled person
-  whose crew is off (e.g. Thermo on a Friday) floats to a station that is
-  running.
+- **Six crews, each on its own clock.** CNC, Sanding (manual + MB), Cefla,
+  Press, Packing/Despatch and Cut & Clash each have their own days/week,
+  shift lengths and **start time** relative to the 6am reference (CNC at
+  -2 = 4am, so the sanders and the Cefla find WIP waiting when they start).
+  Staffing is decided once per shift, per crew, when that crew starts; each
+  crew hands over from day to afternoon at its own shift length; a
+  cross-skilled person whose crew is off (e.g. Thermo on a Friday) floats
+  to a station that is running.
 - **Stations are processed downstream-first** each hour, so work needs at
   least one hour per station to travel the line.
 - **Queues are worked oldest-order-first.** Remakes keep their original

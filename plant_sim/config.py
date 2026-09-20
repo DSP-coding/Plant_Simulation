@@ -408,6 +408,10 @@ def is_flow_station(station_id: str) -> bool:
 
 SHIFT_LABELS = ("day", "aft")
 
+# How far a crew's day may be shifted from the plant's 6am reference start.
+MIN_CREW_START_HOUR = -6.0    # 6 hours early = midnight
+MAX_CREW_START_HOUR = 12.0
+
 
 @dataclass
 class ShiftSchedule:
@@ -415,6 +419,12 @@ class ShiftSchedule:
     day_hrs: float = 8.0
     aft_enabled: bool = False
     aft_hrs: float = 8.0
+    # When this crew's day shift starts, in hours relative to the plant's
+    # reference day start (hour 0 = 6am). -2 = the crew starts at 4am, so
+    # its whole day (day shift, then afternoon shift) runs two hours ahead
+    # of everyone else's - the way you'd start the CNCs early to have WIP in
+    # front of the sanders and the Cefla by the time those crews arrive.
+    start_hour: float = 0.0
 
     def __post_init__(self):
         # Fail loudly on nonsense (a negative shift length, 9 days a week)
@@ -425,7 +435,21 @@ class ShiftSchedule:
             raise ValueError("shift lengths cannot be negative")
         if self.day_hrs + (self.aft_hrs if self.aft_enabled else 0.0) > 24.0 + 1e-9:
             raise ValueError("day + afternoon shift cannot exceed 24 hours")
+        if not (MIN_CREW_START_HOUR <= self.start_hour <= MAX_CREW_START_HOUR):
+            raise ValueError(f"start_hour must be between {MIN_CREW_START_HOUR:g} and {MAX_CREW_START_HOUR:g} "
+                             f"(hours relative to the 6am day start), got {self.start_hour}")
         self.days_per_week = int(self.days_per_week)
+
+    def local_clock(self, h: float) -> tuple[int, float] | None:
+        """This crew's own (day index, hour-of-day) at absolute simulation
+        hour h, or None before the crew's first day has begun. A crew that
+        starts at -2 is at ITS hour 0 when the plant clock reads -2, i.e.
+        22:00 of the previous plant day."""
+        t = h - self.start_hour
+        if t < 0:
+            return None
+        d = int(t // 24)
+        return d, t - d * 24
 
     def shift_at(self, hour_of_day: float) -> str | None:
         """Which shift ('day'/'aft') covers this hour-of-day, or None if closed.
@@ -452,17 +476,19 @@ class ShiftSchedule:
         return weekday < self.days_per_week
 
 
-# Which crew schedule each station belongs to.
+# Which crew schedule each station belongs to. One crew per area of the
+# floor, so each can be given its own days, hours and start time - e.g. run
+# the CNCs from 4am so the sanders and the Cefla find WIP waiting at 6am.
 STATION_CREW: dict[str, str] = {
-    "cnc_thermo": "thermo_cnc",
-    "sanding": "thermo_cnc",
-    "mb_sander": "finishing",
-    "edging": "finishing",
-    "press_1": "finishing",
-    "press_2": "finishing",
-    "despatch": "finishing",
-    "hafele": "finishing",
-    "diy": "finishing",
+    "cnc_thermo": "cnc",
+    "sanding": "sanding",
+    "mb_sander": "sanding",
+    "edging": "cefla",
+    "press_1": "press",
+    "press_2": "press",
+    "despatch": "packing",
+    "hafele": "packing",
+    "diy": "packing",
     "optimising": "cutclash",
     "cnc_1536": "cutclash",
     "edge_bander": "cutclash",
@@ -470,10 +496,26 @@ STATION_CREW: dict[str, str] = {
     "admin": "admin",
 }
 
+CREW_LABELS: dict[str, str] = {
+    "cnc": "CNC crew (Thermo CNCs)",
+    "sanding": "Sanding crew (manual sanding + MB Sander)",
+    "cefla": "Cefla crew (gluing line)",
+    "press": "Press crew (Press 1 & 2)",
+    "packing": "Packing / Despatch crew (incl. Hafele & DIY)",
+    "cutclash": "Cut & Clash crew (Optimising, 1536, edge bander, drilling)",
+    "admin": "Admin",
+}
+
 # [ASSUMPTION] default schedules - edit freely, or override per-crew in the UI.
+# All Thermo crews currently share the same 4 x (10 h + 10 h) pattern and
+# the 6am start (start_hour 0); the split is so each can be changed alone.
+_THERMO_DEFAULT = dict(days_per_week=4, day_hrs=10.0, aft_enabled=True, aft_hrs=10.0)
 DEFAULT_SHIFT_SCHEDULES: dict[str, ShiftSchedule] = {
-    "thermo_cnc": ShiftSchedule(days_per_week=4, day_hrs=10.0, aft_enabled=True, aft_hrs=10.0),
-    "finishing": ShiftSchedule(days_per_week=4, day_hrs=10.0, aft_enabled=True, aft_hrs=10.0),
+    "cnc": ShiftSchedule(**_THERMO_DEFAULT),
+    "sanding": ShiftSchedule(**_THERMO_DEFAULT),
+    "cefla": ShiftSchedule(**_THERMO_DEFAULT),
+    "press": ShiftSchedule(**_THERMO_DEFAULT),
+    "packing": ShiftSchedule(**_THERMO_DEFAULT),
     # [REAL, corrected] an afternoon Cut & Clash shift does run - Jerard
     # Mendoza works CNC 1536 + Edge Banding in the afternoon. Afternoon
     # hours are still an [ASSUMPTION] guess (8h) pending confirmation.
@@ -799,6 +841,8 @@ def validate_config() -> None:
             problems.append(f"STATION_CREW refers to unknown station '{sid}'")
         if crew not in DEFAULT_SHIFT_SCHEDULES:
             problems.append(f"crew '{crew}' has no entry in DEFAULT_SHIFT_SCHEDULES")
+        if crew not in CREW_LABELS:
+            problems.append(f"crew '{crew}' has no entry in CREW_LABELS")
     for route, seq in ROUTE_SEQUENCE.items():
         for sid in seq:
             if sid not in STATIONS:

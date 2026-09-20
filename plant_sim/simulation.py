@@ -294,6 +294,7 @@ class Simulator:
         warmup_days = int(s.warmup_days)
         warmup_hours = warmup_days * 24
         end_hour = warmup_hours + s.horizon_hours()
+        total_days = end_hour // 24
 
         # -- intake schedule: the horizon's total spread evenly over the
         # intake hours (weekdays, office window) that fall inside the
@@ -438,42 +439,52 @@ class Simulator:
                         if recording:
                             cum_intake += qty
 
-            # -- which shift (if any) each station's crew is on right now --
-            label_by_station = self._shift_label_by_station(weekday, hour_of_day)
+            # -- which shift (if any) each station's crew is on right now, and
+            #    which of the crew's own days it is (crews can start early/late) --
+            label_by_station, day_by_station = self._shift_label_by_station(h)
             active_now = {sid for sid, lbl in label_by_station.items() if lbl is not None}
 
-            # -- staffing allocation snapshots, one per shift label per day --
+            # -- staffing allocation snapshots, one per shift label per day,
+            #    taken when the first crew starts that shift. A crew that
+            #    starts before hour 0 begins day d inside plant day d-1, so
+            #    both today's and tomorrow's snapshot hours are checked. --
             for label in cfg.SHIFT_LABELS:
-                key = (day_index, label)
-                if key in allocation_cache or hour_of_day != self._snapshot_hour(weekday, label):
-                    continue
-                active_for_label = self._active_stations_for_shift(weekday, label)
-                available_ops = [op for op in self.roster.operators
-                                  if op.shift == label and op.id not in absent_ids]
-                queue_snapshot = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
-                assignment = allocate_shift(available_ops, active_for_label, queue_snapshot)
-                allocation_cache[key] = assignment
-                if recording:
-                    names_by_station: dict[str, list[str]] = {}
-                    for op in self.roster.operators:
-                        if op.shift != label:
-                            continue
-                        station = assignment.get(op.id) if op.id not in absent_ids else None
-                        if station:
-                            names_by_station.setdefault(station, []).append(op.name)
-                            if station == op.home_station and op.second_station and op.second_station != station:
-                                names_by_station.setdefault(op.second_station, []).append(op.name + " (also)")
-                        attendance_log.append({
-                            "day": record_day_index, "operator_id": op.id, "operator_name": op.name,
-                            "shift": label,
-                            "status": self._attendance_status(op, weekday, label, absent_ids, assignment),
-                            "station": station,
-                        })
-                    staffing_by_shift[f"{record_day_index}|{label}"] = names_by_station
+                for d in (day_index, day_index + 1):
+                    key = (d, label)
+                    if key in allocation_cache or h != self._snapshot_abs_hour(d, label):
+                        continue
+                    d_weekday = d % 7
+                    if d not in absences_by_day:
+                        absences_by_day[d] = self.roster.roll_daily_absences(d, s.sick_enabled, self.rng)
+                    absent_d = absences_by_day[d]
+                    active_for_label = self._active_stations_for_shift(d_weekday, label)
+                    available_ops = [op for op in self.roster.operators
+                                      if op.shift == label and op.id not in absent_d]
+                    queue_snapshot = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
+                    assignment = allocate_shift(available_ops, active_for_label, queue_snapshot)
+                    allocation_cache[key] = assignment
+                    rec_day = d - warmup_days
+                    if 0 <= rec_day < total_days - warmup_days:
+                        names_by_station: dict[str, list[str]] = {}
+                        for op in self.roster.operators:
+                            if op.shift != label:
+                                continue
+                            station = assignment.get(op.id) if op.id not in absent_d else None
+                            if station:
+                                names_by_station.setdefault(station, []).append(op.name)
+                                if station == op.home_station and op.second_station and op.second_station != station:
+                                    names_by_station.setdefault(op.second_station, []).append(op.name + " (also)")
+                            attendance_log.append({
+                                "day": rec_day, "operator_id": op.id, "operator_name": op.name,
+                                "shift": label,
+                                "status": self._attendance_status(op, d_weekday, label, absent_d, assignment),
+                                "station": station,
+                            })
+                        staffing_by_shift[f"{rec_day}|{label}"] = names_by_station
 
             waiting_now = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
             ops_per_station, cnc_tags, helping_now = self._headcount_per_station(
-                allocation_cache, day_index, label_by_station, ops_by_id, waiting_now, hours_per_m2)
+                allocation_cache, day_by_station, label_by_station, ops_by_id, waiting_now, hours_per_m2)
             if recording:
                 for op_id, share in helping_now.items():
                     person_hours[op_id]["helping"] += share
@@ -766,14 +777,24 @@ class Simulator:
     # Shifts and staffing
     # -----------------------------------------------------------------
 
-    def _shift_label_by_station(self, weekday: int, hour_of_day: float) -> dict[str, str | None]:
-        """Which shift each station's crew is on at this hour ('day', 'aft',
-        or None if that crew isn't running)."""
-        out = {}
+    def _shift_label_by_station(self, h: int) -> tuple[dict[str, str | None], dict[str, int]]:
+        """Which shift each station's crew is on at absolute hour h ('day',
+        'aft', or None if that crew isn't running), and which of the crew's
+        OWN day indexes it is. Each crew runs on its own clock, offset from
+        the plant's 6am reference by its start_hour, so a CNC crew starting
+        at -2 is on day 7 (Monday) from Sunday 22:00 plant time."""
+        labels: dict[str, str | None] = {}
+        days: dict[str, int] = {}
         for sid, crew_name in cfg.STATION_CREW.items():
             sched = self.settings.shift_schedules[crew_name]
-            out[sid] = sched.shift_at(hour_of_day) if sched.active_on_weekday(weekday) else None
-        return out
+            clock = sched.local_clock(h)
+            if clock is None:
+                labels[sid], days[sid] = None, h // 24
+                continue
+            d, hod = clock
+            days[sid] = d
+            labels[sid] = sched.shift_at(hod) if sched.active_on_weekday(d % 7) else None
+        return labels, days
 
     def _active_stations_for_shift(self, weekday: int, shift_label: str) -> set[str]:
         """Stations whose crew runs this shift label on this weekday."""
@@ -784,18 +805,20 @@ class Simulator:
                 active.add(sid)
         return active
 
-    def _snapshot_hour(self, weekday: int, shift_label: str) -> int:
-        """The hour-of-day at which this day's allocation for `shift_label`
-        is decided: when the first crew starts that shift. If no crew runs
-        that shift today at all, it's decided at hour 0 (everyone on it is
-        simply logged as idle / on a day off)."""
+    def _snapshot_abs_hour(self, day_index: int, shift_label: str) -> int:
+        """The absolute simulation hour at which day `day_index`'s allocation
+        for `shift_label` is decided: when the first crew (on its own clock)
+        starts that shift. If no crew runs that shift that day at all, it's
+        decided at the day's hour 0 (everyone on it is simply logged as idle
+        / on a day off)."""
+        weekday = day_index % 7
         starts = [
-            self.settings.shift_schedules[crew].shift_start_hour(shift_label)
+            day_index * 24 + sched.start_hour + sched.shift_start_hour(shift_label)
             for crew in set(cfg.STATION_CREW.values())
-            if (self.settings.shift_schedules[crew].active_on_weekday(weekday)
-                and self.settings.shift_schedules[crew].offers_shift(shift_label))
+            for sched in (self.settings.shift_schedules[crew],)
+            if sched.active_on_weekday(weekday) and sched.offers_shift(shift_label)
         ]
-        return int(math.floor(min(starts))) if starts else 0
+        return int(math.floor(min(starts))) if starts else day_index * 24
 
     def _attendance_status(self, op, weekday: int, label: str, absent_ids: set[str],
                            assignment: dict[str, str | None]) -> str:
@@ -858,7 +881,8 @@ class Simulator:
         return [(home, 1.0 - share, op.machine), (second, share, op.machine_2)]
 
     @classmethod
-    def _headcount_per_station(cls, allocation_cache, day_index: int, label_by_station: dict[str, str | None],
+    def _headcount_per_station(cls, allocation_cache, day_by_station: dict[str, int],
+                                label_by_station: dict[str, str | None],
                                 ops_by_id, waiting_now, hours_per_m2) -> tuple[dict[str, float], list, dict]:
         """How much of a person is on each station THIS hour (people split
         across two stations count fractionally, by where the work is), read
@@ -876,7 +900,7 @@ class Simulator:
         for sid, label in label_by_station.items():
             if label is None:
                 continue
-            assignment = allocation_cache.get((day_index, label))
+            assignment = allocation_cache.get((day_by_station[sid], label))
             if not assignment:
                 continue
             for op_id, st in assignment.items():

@@ -77,7 +77,9 @@ def _crew_hint(shift_id: str, shift_schedules: dict[str, cfg.ShiftSchedule] | No
             continue
         if sched.offers_shift(shift_id):
             hrs = sched.day_hrs if shift_id == "day" else sched.aft_hrs
-            parts.append(f"{crew} {hrs:g}h x {sched.days_per_week}d")
+            start = sched.start_hour + (0.0 if shift_id == "day" else sched.day_hrs)
+            at = f" from {int((6 + start) % 24):02d}:{int(round(((6 + start) % 1) * 60)):02d}" if sched.start_hour else ""
+            parts.append(f"{crew} {hrs:g}h x {sched.days_per_week}d{at}")
         else:
             parts.append(f"{crew}: none")
     return " · ".join(parts)

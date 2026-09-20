@@ -472,6 +472,49 @@ went unscheduled.
   and rejected: Streamlit needs a pile of collection hooks, breaks on
   dependency bumps, and one-file builds trip Defender/SmartScreen.
 
+## Session 7 - one crew per area, each with its own start time (21 Sep 2026)
+
+The three shift crews (`thermo_cnc` = CNC + sanding, `finishing` = MB +
+Cefla + presses + packing, `cutclash`) are now six, one per area of the
+floor - `cnc`, `sanding` (manual + MB), `cefla`, `press`, `packing`
+(despatch + Hafele + DIY), `cutclash` - plus `admin`. Each has its own
+days/week, day and afternoon hours, and a new **start_hour**: the offset
+of that crew's day from the plant's 6am reference (-2 = 4am, +1 = 7am,
+range -6..+12). A crew's afternoon shift follows its own day shift, so
+the whole crew runs early/late together.
+
+Engine: every crew runs on its own clock (`ShiftSchedule.local_clock`),
+so "which shift is this station on" and "which day's allocation applies"
+are per crew; the allocation snapshot for a day is taken when the FIRST
+crew starts that shift, which for an early crew is inside the previous
+plant day (Sunday 22:00 for a Monday 4am CNC start). Attendance, intake,
+the 4pm cut-off and the morning scheduling release all stay on the plant
+calendar. Defaults are unchanged (all Thermo crews 4 x 10 h + 10 h from
+6am; Cut & Clash 5 x 8 h + 8 h), so existing results are identical.
+
+What the knob does at 13,000 m²/month (real roster, median mix):
+
+| schedule | completion | Thermo lead (wd) | DIFOT | CNC util | sanding util |
+|---|---|---|---|---|---|
+| 7,300 m², defaults | 104% | 5.3 | 100% | 62% | 74% |
+| 13,000 m², defaults | 73% | 12.0 | 23% | 91% | 90% |
+| 13,000, CNC crew from 4am | 71% | 12.1 | 22% | 92% | 91% |
+| 13,000, all Thermo crews 5 days | 85% | 8.1 | 100% | 87% | 92% |
+| 13,000, CNC 4am + all 5 days | 85% | 8.0 | 100% | 87% | 93% |
+
+Starting the CNC crew early on its own doesn't add hours - it only moves
+the same 20 h/day two hours earlier - so at 13,000 m² it changes nothing
+except *when* the sanding pile builds. Hours do: a 5th day on every
+Thermo crew lifts completion 73 -> 85%. The rest is capacity: 13,000 m²
+is above the CNC area's 10,000 m²/month (and sanding's, which is tied to
+it), so 13,000 needs more CNC/sanding hours or capacity, not an earlier
+start. The early start earns its keep when the *downstream* crews are the
+ones that would otherwise stand idle at 6am waiting for parts - use the
+Cefla / sanding protective-buffer read-outs in the TOC section to see it.
+
+Sidebar widget keys for crews are now `crew_<name>_*`; saved settings for
+the old crew names are simply ignored.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working

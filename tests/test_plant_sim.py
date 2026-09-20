@@ -693,6 +693,54 @@ class FloorEditorTests(unittest.TestCase):
         self.assertEqual(r.trace[0]["day"], 0)
 
 
+class CrewStartTests(unittest.TestCase):
+    """Each crew runs on its own clock, offset from the 6am plant start."""
+
+    def test_one_crew_per_area(self):
+        self.assertEqual(cfg.STATION_CREW["cnc_thermo"], "cnc")
+        self.assertEqual({cfg.STATION_CREW[s] for s in ("sanding", "mb_sander")}, {"sanding"})
+        self.assertEqual(cfg.STATION_CREW["edging"], "cefla")
+        self.assertEqual({cfg.STATION_CREW[s] for s in ("press_1", "press_2")}, {"press"})
+        self.assertEqual({cfg.STATION_CREW[s] for s in ("despatch", "hafele", "diy")}, {"packing"})
+        self.assertEqual({cfg.STATION_CREW[s] for s in ("optimising", "cnc_1536", "edge_bander", "drilling")}, {"cutclash"})
+
+    def test_local_clock_with_an_early_start(self):
+        early = cfg.ShiftSchedule(4, 10.0, True, 10.0, start_hour=-2.0)
+        self.assertIsNone(early.local_clock(-3))              # before its first day
+        self.assertEqual(early.local_clock(-2), (0, 0.0))     # its hour 0 = plant hour -2 (4am)
+        self.assertEqual(early.local_clock(166), (7, 0.0))    # Sunday 22:00 plant time = its Monday 4am
+        self.assertEqual(early.local_clock(8), (0, 10.0))     # plant 14:00 = its hour 10 -> afternoon shift
+        with self.assertRaises(ValueError):
+            cfg.ShiftSchedule(4, 10.0, True, 10.0, start_hour=-7.0)
+        with self.assertRaises(ValueError):
+            cfg.ShiftSchedule(4, 10.0, True, 10.0, start_hour=13.0)
+
+    def test_cnc_crew_starting_early_runs_ahead_of_the_sanders(self):
+        scheds = {k: cfg.ShiftSchedule(**vars(v)) for k, v in cfg.DEFAULT_SHIFT_SCHEDULES.items()}
+        scheds["cnc"] = cfg.ShiftSchedule(4, 10.0, True, 10.0, start_hour=-2.0)
+        r = Simulator(tiny_roster(), settings(horizon="month", shift_schedules=scheds, mix_pct={"S1": 100.0})).run()
+        by_h = {t["h"]: t for t in r.trace}
+        sun_night = by_h[7 * 24 - 2]                           # Sunday 22:00: only the CNC crew is in
+        self.assertEqual(sun_night["shift"]["cnc_thermo"], "day")
+        self.assertIsNone(sun_night["shift"]["sanding"])
+        self.assertGreater(sun_night["ops"]["cnc_thermo"], 0)   # ...and staffed (Monday's allocation taken early)
+        self.assertEqual(by_h[7 * 24 + 7]["shift"]["cnc_thermo"], "day")   # its 10 h day runs to plant hour 8
+        self.assertEqual(by_h[7 * 24 + 8]["shift"]["cnc_thermo"], "aft")
+        self.assertEqual(by_h[7 * 24 + 8]["shift"]["sanding"], "day")      # sanders still on days
+        # the CNC crew's early Monday also ends early: at plant hour 18 the CNC afternoon is over, sanding's isn't
+        self.assertIsNone(by_h[7 * 24 + 18]["shift"]["cnc_thermo"])
+        self.assertEqual(by_h[7 * 24 + 18]["shift"]["sanding"], "aft")
+        # WIP is waiting in front of sanding when its crew arrives Monday 6am
+        self.assertGreater(by_h[7 * 24]["buf"]["sanding"], 0.0)
+        self.assertEqual(r.attendance_log[0]["day"], 0)        # attendance days still line up with the plant calendar
+
+    def test_default_start_is_unchanged_behaviour(self):
+        # start_hour 0 everywhere: hour 8 handover between the 8 h Cut & Clash day and the 10 h Thermo day
+        r = Simulator(tiny_roster(), settings(horizon="day")).run()
+        self.assertEqual(r.trace[8]["shift"]["cnc_1536"], "aft")
+        self.assertEqual(r.trace[8]["shift"]["cnc_thermo"], "day")
+
+
 class SchedulingTests(unittest.TestCase):
     """Optimising's morning release: the 4pm order cut-off, the n-working-day
     scheduling lag, remakes waiting for the next morning, and what happens

@@ -203,22 +203,38 @@ with st.sidebar:
                    "intake total you entered is honoured.")
 
     st.divider()
-    st.header("Shift schedules")
-    st.caption("Hour 0 of each simulated day is the start of the day shift; the afternoon "
-               "shift follows straight on. A crew on N days/week works Monday to day N.")
+    st.header("Shift schedules (per crew)")
+    st.caption("Hour 0 of each simulated day is 6am, the plant's reference day-shift start; the afternoon "
+               "shift follows straight on. A crew on N days/week works Monday to day N. Each crew has its own "
+               "start time: set the CNC crew to -2 and it runs from 4am, building WIP in front of the "
+               "sanders and the Cefla before those crews arrive at 6am.")
     shift_schedules = {}
+
+    def _clock(offset: float) -> str:
+        mins = int(round((6.0 + offset) * 60)) % (24 * 60)
+        return f"{mins // 60:02d}:{mins % 60:02d}"
+
     for crew_name, default_sched in cfg.DEFAULT_SHIFT_SCHEDULES.items():
-        with st.expander(f"{crew_name} crew", expanded=False):
-            seed(f"{crew_name}_days", int(default_sched.days_per_week))
-            seed(f"{crew_name}_dayhrs", float(default_sched.day_hrs))
-            seed(f"{crew_name}_aftenabled", bool(default_sched.aft_enabled))
-            seed(f"{crew_name}_afthrs", float(default_sched.aft_hrs))
-            days = st.slider("Days/week", 0, 7, key=f"{crew_name}_days")
-            day_hrs = st.number_input("Day shift hours", 0.0, 24.0, key=f"{crew_name}_dayhrs")
-            aft_enabled = st.checkbox("Afternoon shift enabled", key=f"{crew_name}_aftenabled")
-            aft_hrs = st.number_input("Afternoon shift hours", 0.0, 24.0, key=f"{crew_name}_afthrs")
+        with st.expander(cfg.CREW_LABELS.get(crew_name, crew_name), expanded=False):
+            seed(f"crew_{crew_name}_days", int(default_sched.days_per_week))
+            seed(f"crew_{crew_name}_dayhrs", float(default_sched.day_hrs))
+            seed(f"crew_{crew_name}_aftenabled", bool(default_sched.aft_enabled))
+            seed(f"crew_{crew_name}_afthrs", float(default_sched.aft_hrs))
+            seed(f"crew_{crew_name}_start", float(default_sched.start_hour))
+            days = st.slider("Days/week", 0, 7, key=f"crew_{crew_name}_days")
+            start = st.number_input("Day shift starts (hours before/after 6am; -2 = 4am, +1 = 7am)",
+                                    float(cfg.MIN_CREW_START_HOUR), float(cfg.MAX_CREW_START_HOUR), step=0.5,
+                                    key=f"crew_{crew_name}_start")
+            day_hrs = st.number_input("Day shift hours", 0.0, 24.0, key=f"crew_{crew_name}_dayhrs")
+            aft_enabled = st.checkbox("Afternoon shift enabled", key=f"crew_{crew_name}_aftenabled")
+            aft_hrs = st.number_input("Afternoon shift hours", 0.0, 24.0, key=f"crew_{crew_name}_afthrs")
             try:
-                shift_schedules[crew_name] = cfg.ShiftSchedule(days, day_hrs, aft_enabled, aft_hrs)
+                shift_schedules[crew_name] = cfg.ShiftSchedule(days, day_hrs, aft_enabled, aft_hrs, start)
+                end_day = start + day_hrs
+                clock = f"day {_clock(start)}-{_clock(end_day)}"
+                if aft_enabled and aft_hrs > 0:
+                    clock += f", afternoon {_clock(end_day)}-{_clock(end_day + aft_hrs)}"
+                st.caption(f"{days} day(s)/week: {clock}")
             except ValueError as e:
                 st.error(str(e))
                 settings_problems.append(f"{crew_name} crew schedule: {e}")
