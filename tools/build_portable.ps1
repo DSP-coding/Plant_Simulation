@@ -31,8 +31,15 @@ $runtime = Join-Path $stage "runtime"
 $downloads = Join-Path $OutDir "downloads"
 
 Write-Host "Building the portable Plant Simulator into $stage"
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+# A running copy locks its files - say so plainly instead of failing on a .pyd.
+$running = Get-Process -Name "Plant Simulator" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$stage*" }
+if ($running) {
+    throw "Plant Simulator.exe is running from $stage - stop it first (right-click its tray icon > Stop Plant Simulator), then build again."
+}
+# Clear the folder's contents rather than the folder itself: an Explorer
+# window open on it would otherwise block the delete.
 New-Item -ItemType Directory -Force $stage | Out-Null
+Get-ChildItem -Force $stage | Remove-Item -Recurse -Force
 New-Item -ItemType Directory -Force $downloads | Out-Null
 
 # -- 1. the official embeddable Python (python.org) -------------------------
