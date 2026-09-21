@@ -126,8 +126,18 @@ button[data-baseweb="tab"][aria-selected="true"] p {{ color: {TEAL}; }}
 [data-testid="stMetricValue"] {{ font-family: {HEADING_FONT}; font-weight: 300; color: {TEXT}; }}
 [data-testid="stMetricDelta"] {{ font-size: 12px; }}
 
-/* ---- hide Streamlit's own chrome (Deploy menu, footer) -------------- */
-[data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu, footer {{ display: none !important; }}
+/* ---- hide Streamlit's own chrome (Deploy button, ... menu, footer) -- */
+/* NOT the whole toolbar: since Streamlit 1.50 the ">>" button that re-opens
+   a collapsed sidebar lives inside it, and hiding the toolbar left users with
+   no way to get the sidebar back. */
+[data-testid="stToolbarActions"], [data-testid="stAppDeployButton"], [data-testid="stMainMenu"],
+[data-testid="stDecoration"], #MainMenu, footer {{ display: none !important; }}
+[data-testid="stToolbar"] {{ background: transparent; }}
+[data-testid="stExpandSidebarButton"] {{
+  color: {TEAL} !important; background: {PANEL} !important; border: 1px solid {LINE} !important;
+  border-radius: 6px !important; margin: 6px 0 0 8px !important;
+}}
+[data-testid="stExpandSidebarButton"]:hover {{ border-color: {TEAL} !important; }}
 
 /* ---- sidebar ------------------------------------------------------- */
 [data-testid="stSidebar"] {{ background: {PANEL}; border-right: 1px solid {LINE}; }}
