@@ -803,6 +803,22 @@ class LeadTimeBasisTests(unittest.TestCase):
         self.assertAlmostEqual(sim._days_elapsed(fri_noon, mon_noon, cfg.Route.THERMO), 1.0)
 
 
+class SettingsMigrationTests(unittest.TestCase):
+    def test_a_saved_combined_intake_is_split_across_the_two_ranges(self):
+        # What app.py does when it finds pre-split saved settings: 9,500 m2
+        # total becomes Thermo + Cut & Clash in the default mix's proportions.
+        old_total = 9500.0
+        split = {}
+        for route in cfg.ROUTE_SEQUENCE:
+            share = sum(cfg.DEFAULT_MIX_PCT[c] for c, pc in cfg.PRODUCT_CLASSES.items()
+                         if pc.route == route)
+            split[route] = round(old_total * share / 100.0, 1)
+        self.assertAlmostEqual(sum(split.values()), old_total, places=1)
+        self.assertGreater(split[cfg.Route.THERMO], split[cfg.Route.CUT_AND_CLASH])
+        r = Simulator(tiny_roster(), settings(horizon="month", intake_m2_by_route=split)).run()
+        self.assertAlmostEqual(r.cum_intake_m2, old_total, places=4)
+
+
 class PeopleGatedStationTests(unittest.TestCase):
     """Edge banding and drilling: nobody on them = nothing comes out, and a
     second person there adds nothing (they cover breaks / the afternoon)."""

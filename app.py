@@ -137,9 +137,20 @@ with st.sidebar:
     # One intake box PER PRODUCT RANGE: the two lines take orders
     # independently, so Thermo can be pushed to 13,000 m2 without inventing
     # Cut & Clash volume to match. Each horizon keeps its own value.
+    #
+    # Settings saved before the split hold one combined "intake_m2_<horizon>"
+    # per horizon. Carry those over by splitting them with the product mix, so
+    # upgrading doesn't quietly throw away the number someone was working to.
+    saved_values = st.session_state.saved_settings.get("values", {})
     for h in cfg.HORIZON_DAYS:
+        old_total = saved_values.get(f"intake_m2_{h}")
         for route in cfg.ROUTE_SEQUENCE:
-            seed(f"intake_m2_{route}_{h}", cfg.REAL_INTAKE_M2[h][route]["median"])
+            default = cfg.REAL_INTAKE_M2[h][route]["median"]
+            if old_total and not saved_values.get(f"intake_m2_{route}_{h}"):
+                route_share = sum(cfg.DEFAULT_MIX_PCT[c] for c, pc in cfg.PRODUCT_CLASSES.items()
+                                   if pc.route == route)
+                default = round(old_total * route_share / 100.0, 1)
+            seed(f"intake_m2_{route}_{h}", default)
 
     st.caption(f"Presets from retrived Tracker data ({INTAKE_SOURCE[horizon]}) for a typical **{horizon}**. "
                f"Orders arrive on weekdays between hour {cfg.INTAKE_WINDOW_HOURS[0]:.0f} and "
