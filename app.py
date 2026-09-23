@@ -134,24 +134,36 @@ with st.sidebar:
     # you pick Week, this is m2 for the whole week, not m2/day. Each horizon
     # remembers its own last-entered value (separate session_state keys) so
     # switching horizons doesn't silently reinterpret your number.
-    intake_key = f"intake_m2_{horizon}"
-    horizon_stats = cfg.REAL_INTAKE_M2[horizon]["combined"]
+    # One intake box PER PRODUCT RANGE: the two lines take orders
+    # independently, so Thermo can be pushed to 13,000 m2 without inventing
+    # Cut & Clash volume to match. Each horizon keeps its own value.
     for h in cfg.HORIZON_DAYS:
-        seed(f"intake_m2_{h}", cfg.REAL_INTAKE_M2[h]["combined"]["median"])
+        for route in cfg.ROUTE_SEQUENCE:
+            seed(f"intake_m2_{route}_{h}", cfg.REAL_INTAKE_M2[h][route]["median"])
 
     st.caption(f"Presets from retrived Tracker data ({INTAKE_SOURCE[horizon]}) for a typical **{horizon}**. "
                f"Orders arrive on weekdays between hour {cfg.INTAKE_WINDOW_HOURS[0]:.0f} and "
-               f"{cfg.INTAKE_WINDOW_HOURS[1]:.0f} of the day shift.")
-    preset_cols = st.columns(2)
-    if preset_cols[0].button(f"Median {horizon} ({horizon_stats['median']:.0f} m²)"):
-        st.session_state[intake_key] = horizon_stats["median"]
-    if preset_cols[1].button(f"Busiest {horizon} ({horizon_stats['max']:.0f} m²)"):
-        st.session_state[intake_key] = horizon_stats["max"]
+               f"{cfg.INTAKE_WINDOW_HOURS[1]:.0f} of the day shift. The product mix below splits each "
+               "range internally (Series 1/2/3 within Thermo, Melamine/Acrylic within Cut & Clash).")
     # NOTE: no `value=` on any keyed widget below - each value lives in
     # st.session_state (seeded from the saved settings file), which is also
-    # what lets the preset buttons above write to the intake box.
-    intake_m2_for_horizon = st.number_input(f"Intake (m² / {horizon})", min_value=0.0, step=10.0,
-                                             key=intake_key)
+    # what lets the preset buttons write to the intake boxes.
+    intake_m2_by_route = {}
+    for route, route_label in ((cfg.Route.THERMO, "Thermo"), (cfg.Route.CUT_AND_CLASH, "Cut & Clash")):
+        key = f"intake_m2_{route}_{horizon}"
+        stats = cfg.REAL_INTAKE_M2[horizon][route]
+        preset_cols = st.columns(2)
+        if preset_cols[0].button(f"Median ({stats['median']:,.0f} m²)", key=f"preset_med_{route}"):
+            st.session_state[key] = stats["median"]
+        if preset_cols[1].button(f"Busiest ({stats['max']:,.0f} m²)", key=f"preset_max_{route}"):
+            st.session_state[key] = stats["max"]
+        intake_m2_by_route[route] = st.number_input(f"{route_label} intake (m² / {horizon})",
+                                                     min_value=0.0, step=10.0, key=key)
+    intake_m2_for_horizon = sum(intake_m2_by_route.values())
+    st.caption(f"**Total {horizon}: {intake_m2_for_horizon:,.0f} m²** "
+               f"(Cut & Clash "
+               f"{100 * intake_m2_by_route[cfg.Route.CUT_AND_CLASH] / intake_m2_for_horizon:.1f}%)"
+               if intake_m2_for_horizon > 0 else "**Total: 0 m²** - nothing will be simulated.")
 
     st.caption("Cut & Clash (1536) quotes its own lead time, separate from Thermo. Both targets and "
                "DIFOT are measured in WORKING days (Mon-Fri, weekends excluded), matching the real "
@@ -167,6 +179,10 @@ with st.sidebar:
     st.divider()
     st.header("Area capacities (m² / month)")
     st.caption("Known capacities of machines. Note: capacities change depending on staffing and absenteeism.")
+    people_gated = ", ".join(station_label(sid) for sid in cfg.PEOPLE_GATED_STATIONS)
+    st.caption(f"**{people_gated}** are people-gated: the figure is what ONE person gets through, "
+               "and with nobody on the station its capacity is zero - a second person there covers "
+               "breaks or the afternoon rather than making the machine run faster.")
     station_capacity_m2_per_month = {}
     # Flow order matching how the factory actually runs, CNC/Sanding/MB Sander/
     # Press/Cefla first (the ones you're most likely to have real numbers for).
@@ -174,13 +190,15 @@ with st.sidebar:
                        "despatch", "optimising", "cnc_1536", "edge_bander", "drilling"]
     for sid in capacity_order:
         seed(f"cap_{sid}", float(round(cfg.default_station_capacity_m2_per_month(sid), 0)))
+        gated = " (per person; 0 when unstaffed)" if sid in cfg.PEOPLE_GATED_STATIONS else ""
         station_capacity_m2_per_month[sid] = st.number_input(
-            f"{station_label(sid)}", min_value=0.0, step=100.0, key=f"cap_{sid}")
+            f"{station_label(sid)}{gated}", min_value=0.0, step=100.0, key=f"cap_{sid}")
 
     st.divider()
     st.header("Product mix (%)")
-    st.caption("Real Thermo (80.6%) / Cut&Clash (19.4%) split from FileMaker data 2025-2026; "
-               "the S1/S2/S3 mix can change depending on market trend.")
+    st.caption("The split WITHIN each range: Series 1/2/3 share of Thermo, Melamine/Acrylic share of "
+               "Cut & Clash. How much each range gets in total comes from the two intake boxes above. "
+               "The S1/S2/S3 mix can change depending on market trend.")
     mix_pct = {}
     for cls, pc in cfg.PRODUCT_CLASSES.items():
         seed(f"mix_{cls}", float(round(cfg.DEFAULT_MIX_PCT[cls], 2)))
@@ -329,7 +347,7 @@ def run_simulation() -> None:
     """Build settings from the sidebar, run, and store the result (or show why not)."""
     try:
         settings = SimulationSettings(
-            horizon=horizon, intake_m2_for_horizon=intake_m2_for_horizon, mix_pct=mix_pct,
+            horizon=horizon, intake_m2_by_route=intake_m2_by_route, mix_pct=mix_pct,
             target_lead_days=target_lead_days, shift_schedules=shift_schedules,
             station_capacity_m2_per_month=station_capacity_m2_per_month,
             remake_enabled=remake_enabled, remake_rate_pct=remake_rate_pct, remake_days=remake_days,

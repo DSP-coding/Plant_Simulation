@@ -43,6 +43,12 @@ class SimulationSettings:
     # horizon (cfg.REAL_INTAKE_M2), resolved in __post_init__ - so a "day"
     # run never silently gets a month's worth of orders.
     intake_m2_for_horizon: float | None = None
+    # Intake entered SEPARATELY per product range ({route: m2 for the
+    # horizon}) - the two lines take orders independently, so one can be
+    # pushed to 13,000 m2 without inventing Cut & Clash volume to match.
+    # Left as None, it is split out of intake_m2_for_horizon using the
+    # product mix, which is how the single-total behaviour is preserved.
+    intake_m2_by_route: dict[str, float] | None = None
     mix_pct: dict[str, float] = field(default_factory=lambda: dict(cfg.DEFAULT_MIX_PCT))
     # Separate target lead time per product range - Cut & Clash (1536) quotes
     # 7 days; Thermo defaults to 10 (edit freely).
@@ -96,8 +102,23 @@ class SimulationSettings:
         return cap if cap and cap > 0 else math.inf
 
     def __post_init__(self):
-        if self.intake_m2_for_horizon is None and self.horizon in cfg.REAL_INTAKE_M2:
-            self.intake_m2_for_horizon = cfg.REAL_INTAKE_M2[self.horizon]["combined"]["median"]
+        if self.intake_m2_by_route:
+            self.intake_m2_by_route = {r: float(v) for r, v in self.intake_m2_by_route.items()}
+            if self.intake_m2_for_horizon is None:
+                self.intake_m2_for_horizon = sum(self.intake_m2_by_route.values())
+        else:
+            if self.intake_m2_for_horizon is None and self.horizon in cfg.REAL_INTAKE_M2:
+                self.intake_m2_for_horizon = cfg.REAL_INTAKE_M2[self.horizon]["combined"]["median"]
+            # No per-route figures given: split the total by the product mix,
+            # exactly as the engine did when intake was one number.
+            total = self.intake_m2_for_horizon or 0.0
+            mix = self.mix_pct
+            share = sum(v for v in mix.values() if v > 0) or 1.0
+            self.intake_m2_by_route = {
+                route: total * sum(mix.get(c, 0.0) for c, pc in cfg.PRODUCT_CLASSES.items()
+                                    if pc.route == route) / share
+                for route in cfg.ROUTE_SEQUENCE
+            }
         self.validate()
 
     def validate(self) -> None:
@@ -107,6 +128,11 @@ class SimulationSettings:
             p.append(f"horizon must be one of {list(cfg.HORIZON_DAYS)}, got {self.horizon!r}")
         if self.intake_m2_for_horizon is None or self.intake_m2_for_horizon < 0:
             p.append(f"intake_m2_for_horizon must be >= 0, got {self.intake_m2_for_horizon!r}")
+        for route, v in (self.intake_m2_by_route or {}).items():
+            if route not in cfg.ROUTE_SEQUENCE:
+                p.append(f"intake_m2_by_route has unknown product range {route!r}")
+            elif v < 0:
+                p.append(f"intake_m2_by_route[{route!r}] must be >= 0, got {v}")
         unknown = [c for c in self.mix_pct if c not in cfg.PRODUCT_CLASSES]
         if unknown:
             p.append(f"mix_pct has unknown product class(es) {unknown}")
@@ -168,6 +194,24 @@ class SimulationSettings:
         X m2" always means X m2 no matter how the sliders were left."""
         total = sum(self.mix_pct.values())
         return {c: 100.0 * v / total for c, v in self.mix_pct.items()}
+
+    def route_mix(self) -> dict[str, dict[str, float]]:
+        """{route: {class: share % WITHIN that range}}. Now that intake is
+        entered per range, the mix sliders decide the split inside each one
+        (S1/S2/S3 within Thermo; Melamine/Acrylic within Cut & Clash) - the
+        across-range share comes from the two intake numbers instead. A range
+        whose classes are all at 0% is spread evenly, so entering intake for
+        it never silently disappears."""
+        out: dict[str, dict[str, float]] = {r: {} for r in cfg.ROUTE_SEQUENCE}
+        for cls, pc in cfg.PRODUCT_CLASSES.items():
+            out[pc.route][cls] = max(0.0, self.mix_pct.get(cls, 0.0))
+        for route, classes in out.items():
+            total = sum(classes.values())
+            if total > 0:
+                out[route] = {c: 100.0 * v / total for c, v in classes.items()}
+            elif classes:
+                out[route] = {c: 100.0 / len(classes) for c in classes}
+        return out
 
 
 @dataclass
@@ -312,10 +356,19 @@ class Simulator:
             intake_per_hour = s.intake_m2_for_horizon / intake_hours_in_window
             notes.append("No weekday intake hours fell inside the reporting window, so intake "
                          "was spread over every hour of it instead.")
-        mix = s.normalised_mix()
+        # Each range's own intake, spread over the same intake hours, split
+        # inside the range by the mix sliders.
+        route_mix = s.route_mix()
+        intake_per_hour_by_route = {r: v / intake_hours_in_window
+                                    for r, v in (s.intake_m2_by_route or {}).items()}
         if abs(sum(s.mix_pct.values()) - 100.0) > 0.05:
-            notes.append(f"Product mix summed to {sum(s.mix_pct.values()):.1f}% and was normalised "
-                         "to 100% so the intake total is honoured.")
+            notes.append(f"Product mix summed to {sum(s.mix_pct.values()):.1f}%, not 100% - it is read as "
+                         "shares WITHIN each product range and normalised there, so each range's intake "
+                         "total is exactly what you entered.")
+        for route, classes in route_mix.items():
+            if sum(s.mix_pct.get(c, 0.0) for c in classes) <= 0 and (s.intake_m2_by_route or {}).get(route, 0) > 0:
+                notes.append(f"{ROUTE_LABELS[route]} has intake but every class in it is at 0% - its intake "
+                             "was spread evenly over its classes instead of being dropped.")
 
         # press_1/press_2 don't get their own queue - they're two independently
         # staffed machines pulling from one shared physical pile of work.
@@ -419,11 +472,12 @@ class Simulator:
                 remake_holding = still_held
 
             # -- fresh intake, split by class mix --
-            if is_intake_hour(h) and intake_per_hour > 0:
-                for cls, pct in mix.items():
-                    qty = intake_per_hour * pct / 100.0
-                    if qty > EPS_M2:
-                        route = cfg.PRODUCT_CLASSES[cls].route
+            if is_intake_hour(h):
+                for route, per_hour in intake_per_hour_by_route.items():
+                    for cls, pct in route_mix[route].items():
+                        qty = per_hour * pct / 100.0
+                        if qty <= EPS_M2:
+                            continue
                         entry = cfg.ROUTE_ENTRY_STATION[route]
                         # Thermo intake is split into special orders (routed to
                         # C6) and regular work; Cut & Clash has no such split.

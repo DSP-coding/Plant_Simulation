@@ -523,6 +523,51 @@ Worth noting from the same run: the 1536 sits at 97% utilisation at
 lead time climbs fast, which is what the earlier 9-day / 0% screenshot
 was showing on top of the wrong ruler.
 
+## Session 8 - intake per product range, people-gated edge banding / drilling (24 Sep 2026)
+
+**Intake is now entered per range.** One combined intake box plus a mix
+percentage forced the two lines to move together; they don't. The sidebar
+now has a Thermo box and a Cut & Clash box (`intake_m2_by_route`), each
+with its own median/busiest preset, and the mix sliders became shares
+*within* a range (`SimulationSettings.route_mix`). Entering one total
+still works - `intake_m2_by_route` left empty is split by the mix exactly
+as before, which is why every existing test still passes.
+
+**[REAL] New per-range monthly series** from "2026 Monthly m2 Thermo vs
+Cut and Clash" (Cut and Clash = Melamine + Acrylic, blanks excluded),
+full months Jan-Aug 2026 (September partial, excluded):
+
+| | median | mean | p90 | busiest |
+|---|---|---|---|---|
+| Thermo | 5,820 | 5,740 | 6,575 | 6,867 (Mar) |
+| Cut & Clash | 1,364 | 1,383 | 2,058 | 2,548 (Mar) |
+
+YTD share Cut & Clash 19.4% of 58,649 m2, matching `DEFAULT_MIX_PCT`.
+`REAL_INTAKE_M2["month"]["combined"]` still comes from the older 13-month
+tracker (7,300), so it doesn't add up to 5,820 + 1,364 = 7,184 exactly -
+different source and period; the per-range numbers drive the presets, the
+combined one stays for the reality check.
+
+**Edge banding and drilling are people-gated** [REAL, confirmed]: nobody
+on them = zero output (no machine ticks over on its own), and a second
+person doesn't speed the machine up - they cover breaks or let it run
+into the afternoon. That is `ideal_ops=1, machine_bound=True`, which the
+engine already did; what changed is the rate and saying so in the UI
+(`PEOPLE_GATED_STATIONS`, a note by the capacity boxes).
+
+**[ASSUMPTION, back-fit] `EDGE_DRILL_RATE_M2_PER_OP_HOUR = 16.5`**
+(was 13.0, a guess carried over from the old combined station). No
+WorkArea checkpoint measures either machine, so the rate is set so one
+person on the current day shift (4 x 9 h = 156 h/month) just covers the
+busiest real Cut & Clash month, 2,548 m2: 2548 / 156 = 16.3, rounded to
+16.5. The plant demonstrably got that month out with these people, so
+it's a floor on the real rate rather than a guess in the air. At that
+rate and the current roster, the Cut & Clash line is limited by the 1536
+(96% utilised at the busiest month) while the drill sits at ~68% - which
+matches the floor's own view that these two are a staffing problem, not a
+speed problem. Drilling still shows 162 of 324 running hours with work
+waiting and nobody on it, because Eric is days only.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -574,8 +619,10 @@ was showing on top of the wrong ruler.
    volume says it touches everything).
 2. ~~CNC 1536 has zero confirmed day-shift staff~~ **Resolved (session 4)**:
    Nirmal runs it on days, Jerald on afternoons.
-3. **Edge Band/Drilling's real rate** - no matching checkpoint existed in
-   the 3-month export; still a guess (6.5 m²/op-hr).
+3. **Edge Band/Drilling's real rate** - still the weakest number in the
+   model: no checkpoint measures either machine, so 16.5 m²/op-hr is
+   back-fitted from the busiest real month (session 8). Anyone timing
+   panels-per-hour on either machine for one shift would replace it.
 4. ~~Cut & Clash's target lead time: working or calendar days?~~
    **Resolved (session 7b, 21 Sep 2026)**: 7 WORKING days, like Thermo.
    Judging it in calendar days made a 9-calendar-day lead (about 6.4

@@ -350,6 +350,48 @@ class EngineTests(unittest.TestCase):
         self.assertAlmostEqual(r.cum_intake_m2, 1000.0, places=6)
         self.assertTrue(any("normalised" in n for n in r.notes))
 
+    def test_intake_is_entered_per_product_range(self):
+        by_route = {cfg.Route.THERMO: 13000.0, cfg.Route.CUT_AND_CLASH: 1400.0}
+        s = settings(horizon="month", intake_m2_by_route=by_route)
+        self.assertEqual(s.intake_m2_for_horizon, 14400.0)
+        r = Simulator(tiny_roster(), s).run()
+        self.assertAlmostEqual(r.cum_intake_m2, 14400.0, places=6)
+        # each range got its own number, whatever the mix sliders say (measured
+        # on what Optimising released: the tail of the window is still pending,
+        # so compare the ranges' proportions, not the absolute m2)
+        released = {route: sum(e["qty"] for e in r.release_log
+                                if e["route"] == route and not e["remake"])
+                    for route in by_route}
+        self.assertAlmostEqual(released[cfg.Route.THERMO] / released[cfg.Route.CUT_AND_CLASH],
+                                13000.0 / 1400.0, delta=0.05)
+        # ...and the mix splits inside a range, not across ranges
+        rm = s.route_mix()
+        for route, classes in rm.items():
+            self.assertAlmostEqual(sum(classes.values()), 100.0, places=6, msg=route)
+
+    def test_one_range_can_be_zero(self):
+        s = settings(horizon="week", intake_m2_by_route={cfg.Route.THERMO: 500.0,
+                                                         cfg.Route.CUT_AND_CLASH: 0.0})
+        r = Simulator(tiny_roster(), s).run()
+        self.assertAlmostEqual(r.cum_intake_m2, 500.0, places=6)
+        self.assertEqual(r.by_route[cfg.Route.CUT_AND_CLASH].completed_m2, 0.0)
+        self.assertGreater(r.by_route[cfg.Route.THERMO].completed_m2, 0.0)
+
+    def test_a_range_with_no_mix_share_still_gets_its_intake(self):
+        # Cut & Clash intake entered but Melamine/Acrylic both left at 0%
+        s = settings(horizon="week", intake_m2_by_route={cfg.Route.THERMO: 0.0,
+                                                         cfg.Route.CUT_AND_CLASH: 300.0},
+                     mix_pct={"S1": 100.0, "Melamine": 0.0, "Acrylic": 0.0})
+        r = Simulator(tiny_roster(), s).run()
+        self.assertAlmostEqual(r.cum_intake_m2, 300.0, places=6)
+        self.assertTrue(any("spread evenly" in n for n in r.notes))
+
+    def test_intake_by_route_is_validated(self):
+        with self.assertRaises(ValueError):
+            settings(intake_m2_by_route={cfg.Route.THERMO: -5.0})
+        with self.assertRaises(ValueError):
+            settings(intake_m2_by_route={"nonsense": 100.0})
+
     def test_no_intake_on_weekends(self):
         r = Simulator(tiny_roster(), settings(horizon="week")).run()
         by_hour = {t["h"]: t["cum_intake"] for t in r.trace}
@@ -759,6 +801,43 @@ class LeadTimeBasisTests(unittest.TestCase):
         fri_noon, mon_noon = 4 * 24 + 6, 7 * 24 + 6
         self.assertAlmostEqual(sim._days_elapsed(fri_noon, mon_noon, cfg.Route.CUT_AND_CLASH), 1.0)   # weekend not counted
         self.assertAlmostEqual(sim._days_elapsed(fri_noon, mon_noon, cfg.Route.THERMO), 1.0)
+
+
+class PeopleGatedStationTests(unittest.TestCase):
+    """Edge banding and drilling: nobody on them = nothing comes out, and a
+    second person there adds nothing (they cover breaks / the afternoon)."""
+
+    def _cutclash_only(self, ops):
+        return Simulator(Roster(ops), settings(horizon="week", mix_pct={"Melamine": 100.0},
+                                               intake_m2_by_route={cfg.Route.THERMO: 0.0,
+                                                                   cfg.Route.CUT_AND_CLASH: 400.0})).run()
+
+    def test_nobody_on_drilling_means_nothing_completes(self):
+        full = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.FLOW_STATIONS
+                for sh in cfg.SHIFT_LABELS]
+        self.assertGreater(self._cutclash_only(full).by_route[cfg.Route.CUT_AND_CLASH].completed_m2, 0.0)
+        for gated in cfg.PEOPLE_GATED_STATIONS:
+            without = [o for o in full if o.home_station != gated]
+            r = self._cutclash_only(without)
+            self.assertEqual(r.by_route[cfg.Route.CUT_AND_CLASH].completed_m2, 0.0, gated)
+            self.assertEqual(r.station_out_m2[gated], 0.0, gated)
+            self.assertGreater(r.station_unstaffed_hours[gated], 0, gated)
+
+    def test_a_second_person_adds_no_throughput(self):
+        f = Simulator._flat_capacity_m2_per_hour
+        for gated in cfg.PEOPLE_GATED_STATIONS:
+            st = cfg.STATIONS[gated]
+            rate = st.capacity_m2_per_op_hour
+            self.assertEqual(f(st, 0, rate), 0.0, gated)          # nobody = nothing
+            self.assertEqual(f(st, 1, rate), rate, gated)          # one person = full rate
+            self.assertEqual(f(st, 3, rate), rate, gated)          # more people = no faster
+            self.assertEqual(st.max_useful_ops, 1, gated)          # so the allocator won't park people there
+
+    def test_the_rate_covers_the_busiest_real_month_on_one_day_shift(self):
+        # The back-fit that sets the rate: one person, 4 x 9 h days.
+        hours = 4 * 9.0 * cfg.WEEKS_PER_MONTH
+        busiest = cfg.REAL_INTAKE_M2["month"][cfg.Route.CUT_AND_CLASH]["max"]
+        self.assertGreaterEqual(cfg.EDGE_DRILL_RATE_M2_PER_OP_HOUR * hours, busiest)
 
 
 class SchedulingTests(unittest.TestCase):

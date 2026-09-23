@@ -132,8 +132,14 @@ questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
 
 - **Hour 0 of every simulated day is the start of the day shift** (think
   6am), and the afternoon shift follows straight on. Day 0 is a Monday.
+- **Intake is entered separately for Thermo and Cut & Clash**, since the
+  two lines take orders independently: push Thermo to 13,000 m2 without
+  inventing Cut & Clash volume to match. The product-mix sliders then
+  split each range internally (Series 1/2/3 within Thermo,
+  Melamine/Acrylic within Cut & Clash). Presets come from the real
+  2026 per-range monthly series.
 - **Orders arrive on weekdays until the 4pm online cut-off** (hours 0-10
-  of the day shift), spread evenly - the intake total you enter for the
+  of the day shift), spread evenly - the intake you enter for the
   horizon is exactly what arrives inside the reporting window.
 - **Orders wait for Optimising's morning release.** Every weekday morning
   Optimising (Diana) schedules the pending pool onto the CNCs: new orders

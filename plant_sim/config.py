@@ -143,6 +143,16 @@ class Station:
         return None
 
 
+# What one person gets through on the edge bander / drill - see the note on
+# those two stations below for where 16.5 comes from.
+EDGE_DRILL_RATE_M2_PER_OP_HOUR = 16.5
+
+# Stations whose capacity is set by WHO IS ON THEM rather than by a machine's
+# rated output: the number below is what one person gets through, and with
+# nobody on the station the capacity is zero (no machine ticks over on its
+# own). Used by the UI to say so next to the capacity boxes.
+PEOPLE_GATED_STATIONS: tuple[str, ...] = ("edge_bander", "drilling")
+
 # capacity_m2_per_op_hour: optimising/sanding/mb_sander/press_1/press_2/despatch
 # are now [REAL], calibrated from a 3-month WorkArea scan-checkpoint export
 # (90th-percentile daily total per WorkArea, extrapolated to a month, divided
@@ -165,17 +175,30 @@ STATIONS: dict[str, Station] = {
                            ideal_ops=1, capacity_m2_per_op_hour=57.164),
     "cnc_1536":   Station("cnc_1536", "CNC B1536 (Cut & Clash)", Route.CUT_AND_CLASH,
                            ideal_ops=1, capacity_m2_per_op_hour=0.0, num_machines=1),
-    # [ASSUMPTION] Edge banding and drilling are two separate machines on the
-    # real floor (Ali / Eric, both days only), run one after the other. No
-    # real checkpoint data for either: the old combined station did 6.5
-    # m2/op-hr with a 2-person crew, i.e. 13 m2/hr of edge-banded-AND-drilled
-    # work, so each step gets 13 m2/op-hr at ideal_ops=1 to keep that same
-    # overall throughput at the real one-person staffing. Replace with real
-    # cycle times when the WorkArea export gains these checkpoints.
+    # Edge banding and drilling are two separate machines (Ali / Eric, both
+    # days only), run one after the other - every Cut & Clash job goes through
+    # both [REAL, confirmed Sep 2026].
+    #
+    # These two are PEOPLE-GATED, not machine-rated: [REAL, confirmed] nobody
+    # on them means zero output, and a second person doesn't make the machine
+    # go faster - an extra person only covers breaks or lets it run into the
+    # afternoon. That is exactly ideal_ops=1 + machine_bound (0 people = 0,
+    # 1 person = full rate, more adds nothing), so the only open number is
+    # what ONE person gets through, which no WorkArea checkpoint measures.
+    #
+    # [ASSUMPTION, back-fit from real volume] The rate is set so one person on
+    # the current day-shift schedule (4 x 9 h = 156 h/month) just covers the
+    # BUSIEST real Cut & Clash month - 2,548 m2 in Mar 2026 (see
+    # REAL_INTAKE_M2): 2548 / 156 = 16.3 m2/op-hr, rounded to 16.5. The plant
+    # demonstrably got that month out with these people, so this is a floor on
+    # the real rate, not a guess in the air. Replace it the moment anyone
+    # measures panels-per-hour on either machine (EDGE_DRILL_RATE_M2_PER_OP_HOUR).
     "edge_bander": Station("edge_bander", "Edge bander", Route.CUT_AND_CLASH,
-                            ideal_ops=1, capacity_m2_per_op_hour=13.0, num_machines=1, machine_bound=True),
+                            ideal_ops=1, capacity_m2_per_op_hour=EDGE_DRILL_RATE_M2_PER_OP_HOUR,
+                            num_machines=1, machine_bound=True),
     "drilling":   Station("drilling", "Drilling", Route.CUT_AND_CLASH,
-                           ideal_ops=1, capacity_m2_per_op_hour=13.0, num_machines=1, machine_bound=True),
+                           ideal_ops=1, capacity_m2_per_op_hour=EDGE_DRILL_RATE_M2_PER_OP_HOUR,
+                           num_machines=1, machine_bound=True),
     # [REAL, shop-floor sheet Sep 2026] four Thermo CNCs - Weeke (old), B1224,
     # Weeke (new), C6 - each with one operator per shift (the new Weeke is
     # covered by a Press operator on both shifts). ideal_ops ==
@@ -598,11 +621,19 @@ REAL_INTAKE_M2 = {
         # Total m2 by month: 6618, 9103, 7300, 7747, 8763, 8403, 6702, 5442,
         # 6706, 8409, 7702, 7049, 6373.
         "combined": {"median": 7300.0, "mean": 7409.0, "p90": 8763.0, "max": 9103.0},
-        # Thermo m2 by month: 5333, 8236, 6638, 6549, 7849, 7503, 6280, 4870,
-        # 6005, 6671, 6841, 5237, 5518.
-        "thermo":   {"median": 6549.0, "mean": 6425.0, "p90": 7849.0, "max": 8236.0},
-        # Cut & Clash = Total - Thermo per month (not given directly).
-        "cutclash": {"median": 867.0, "mean": 984.0, "p90": 1738.0, "max": 1812.0},
+        # [REAL, per-route, Sep 2026] "2026 Monthly m2 Thermo vs Cut and Clash"
+        # (Cut and Clash = Melamine + Acrylic, blank product types excluded).
+        # Full months Jan-Aug 2026 only - September is partial (source records
+        # run to 7 Sep) and is excluded so it can't drag the stats down:
+        #   Thermo:      3852, 5725, 6867, 6450, 5949, 5840, 5800, 5435
+        #   Cut & Clash:  639,  688, 2548, 1295, 1849, 1161, 1432, 1455
+        # YTD share: Cut & Clash 19.4% of 58,649 m2, matching DEFAULT_MIX_PCT.
+        # NOTE: "combined" above is from the older 13-month tracker (a
+        # different source and period), so thermo + cutclash here won't add up
+        # to it exactly - 7,184 vs 7,300 median. The per-route numbers are the
+        # ones the sidebar's presets use; combined stays for the reality check.
+        "thermo":   {"median": 5820.0, "mean": 5740.0, "p90": 6575.0, "max": 6867.0},
+        "cutclash": {"median": 1364.0, "mean": 1383.0, "p90": 2058.0, "max": 2548.0},
     },
 }
 
