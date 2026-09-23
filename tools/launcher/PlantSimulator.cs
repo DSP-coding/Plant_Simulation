@@ -59,6 +59,7 @@ static class Program
             // Source checkout with nothing set up yet: the .bat knows how to
             // create the private environment (it needs a visible window for that).
             string bat = Path.Combine(dir, "Plant Simulator.bat");
+            if (!File.Exists(bat)) bat = Path.Combine(dir, "resources", "Plant Simulator.bat");
             if (File.Exists(bat))
             {
                 Process.Start(new ProcessStartInfo("cmd.exe", "/c \"\"" + bat + "\"\"") { WorkingDirectory = dir, UseShellExecute = true });

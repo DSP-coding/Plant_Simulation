@@ -554,10 +554,20 @@ class FloorEditorTests(unittest.TestCase):
         self.assertEqual(len(by[("mb_sander", "aft")]), 1)         # Viet
         self.assertEqual(len(by[("hafele", "day")]), 2)            # Ben, Agnes
         self.assertEqual(len(by[("diy", "day")]) + len(by[("diy", "aft")]), 2)   # Dayna, Arona
-        # 3 home CNC operators per shift + a Press cover each = the 4 machines
-        cnc_day = len(by[("cnc_thermo", "day")]) + sum(1 for o in r.operators
-                                                        if o.shift == "day" and "cnc_thermo" in o.skills and o.home_station.startswith("press"))
-        self.assertEqual(cnc_day, cfg.STATIONS["cnc_thermo"].num_machines)
+        # Every Thermo CNC has someone tagged to it on both shifts - whether as
+        # their home machine or as a second machine someone else also tends.
+        # (Who covers the 4th machine moves around as the roster is edited in
+        # the app, so this checks the coverage, not one particular person.)
+        for shift in cfg.SHIFT_LABELS:
+            covered = set()
+            for o in r.operators:
+                if o.shift != shift:
+                    continue
+                if o.home_station == "cnc_thermo" and o.machine:
+                    covered.add(o.machine)
+                if o.second_station == "cnc_thermo" and o.machine_2:
+                    covered.add(o.machine_2)
+            self.assertEqual(covered, set(cfg.STATIONS["cnc_thermo"].machines), shift)
 
     def test_cnc_thermo_lane_manning(self):
         f = Simulator._cnc_thermo_lanes

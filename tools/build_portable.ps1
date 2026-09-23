@@ -3,9 +3,10 @@ Build a portable, no-install ZIP of the Plant Simulator for Windows.
 
     dist\PlantSimulator\           the folder to share (or the ZIP next to it)
         Plant Simulator.exe        double-click this (tray icon, no console window)
-        Plant Simulator.bat        ...or this, if the exe is blocked - same thing with a console
+        README.md                  the short how-to for whoever you send it to
         runtime\                   a private, bundled Python with every package installed
-        app.py, plant_sim\, data\, .streamlit\, launch.py, README.md ...
+        resources\                 CALIBRATION_NOTES.md, the .bat fallback launcher, requirements.txt
+        app.py, plant_sim\, data\, .streamlit\, launch.py
 
 Run it by double-clicking "tools\Build portable package.bat", or:
     powershell -ExecutionPolicy Bypass -File tools\build_portable.ps1
@@ -81,10 +82,14 @@ Write-Host "Copying the app"
 & (Join-Path $root "tools/build_launcher.ps1") -OutDir $stage      # "Plant Simulator.exe"
 Copy-Item (Join-Path $root "app.py") $stage
 Copy-Item (Join-Path $root "launch.py") $stage
-Copy-Item (Join-Path $root "Plant Simulator.bat") $stage
-Copy-Item (Join-Path $root "requirements.txt") $stage
-Copy-Item (Join-Path $root "README.md") $stage
-Copy-Item (Join-Path $root "CALIBRATION_NOTES.md") $stage
+# What the people using the package see at the top level: the exe, a short
+# README for them, and the app. Everything developer-facing goes in resources\.
+Copy-Item (Join-Path $root "tools\package_README.md") (Join-Path $stage "README.md")
+$resources = Join-Path $stage "resources"
+New-Item -ItemType Directory -Force $resources | Out-Null
+Copy-Item (Join-Path $root "Plant Simulator.bat") $resources
+Copy-Item (Join-Path $root "requirements.txt") $resources
+Copy-Item (Join-Path $root "CALIBRATION_NOTES.md") $resources
 Copy-Item (Join-Path $root "plant_sim") (Join-Path $stage "plant_sim") -Recurse
 Get-ChildItem (Join-Path $stage "plant_sim") -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 New-Item -ItemType Directory -Force (Join-Path $stage ".streamlit") | Out-Null

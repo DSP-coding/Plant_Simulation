@@ -29,7 +29,7 @@ from plant_sim.floor_view import build_floor_html
 from plant_sim import persist
 from plant_sim.simulation import Simulator, SimulationSettings
 from plant_sim.staff import Operator, Roster, RosterError
-from plant_sim.theme import apply_theme, brand_footer, brand_header, label
+from plant_sim.theme import apply_theme, brand_footer, label
 
 st.set_page_config(page_title="Dezignatek | Plant Simulator", page_icon="🏭", layout="wide",
                    menu_items={"About": "Dezignatek thermoform + cut & clash plant simulator."})
@@ -115,12 +115,8 @@ def seed(key: str, default):
     return st.session_state[key]
 
 
-brand_header("Plant Simulator")
-st.markdown("# Plan the floor before it happens.")
-st.caption(
-    "CNC (Thermo: Series 1/2/3) → Sanding → MB Sander → Cefla gluing line → Press → Packing, "
-    "and Optimising → CNC B1536 (Cut & Clash: Melamine + Acrylic) → Edge bander → Drilling → Packing."
-)
+st.markdown("# Dezignatek Factory Simulation")
+st.caption("Plant Planning")
 
 # ---------------------------------------------------------------------------
 # Sidebar: intake, mix, target, shifts, remake, sick leave
@@ -143,7 +139,7 @@ with st.sidebar:
     for h in cfg.HORIZON_DAYS:
         seed(f"intake_m2_{h}", cfg.REAL_INTAKE_M2[h]["combined"]["median"])
 
-    st.caption(f"Presets from real order data ({INTAKE_SOURCE[horizon]}) for a typical **{horizon}**. "
+    st.caption(f"Presets from retrived Tracker data ({INTAKE_SOURCE[horizon]}) for a typical **{horizon}**. "
                f"Orders arrive on weekdays between hour {cfg.INTAKE_WINDOW_HOURS[0]:.0f} and "
                f"{cfg.INTAKE_WINDOW_HOURS[1]:.0f} of the day shift.")
     preset_cols = st.columns(2)
@@ -170,11 +166,7 @@ with st.sidebar:
 
     st.divider()
     st.header("Area capacities (m² / month)")
-    st.caption("Capacity of each area AT IDEAL STAFFING, on a fixed reference schedule "
-               f"({cfg.REFERENCE_HOURS_PER_WEEK:.0f} hrs/week) - independent of the actual shift "
-               "schedule you set below. Defaults come from config.py (see CALIBRATION_NOTES.md for "
-               "which are real and which are guesses); edit any of these with a real number and the "
-               "simulation recalculates from it. Setting one to 0 takes that area out of action.")
+    st.caption("Known capacities of machines. Note: capacities change depending on staffing and absenteeism.")
     station_capacity_m2_per_month = {}
     # Flow order matching how the factory actually runs, CNC/Sanding/MB Sander/
     # Press/Cefla first (the ones you're most likely to have real numbers for).
@@ -187,9 +179,8 @@ with st.sidebar:
 
     st.divider()
     st.header("Product mix (%)")
-    st.caption("Real Thermo(80.6%)/Cut&Clash(19.4%) split from product_2026.xlsx; "
-               "the S1/S2/S3 breakdown within Thermo is still a placeholder pending "
-               "Series Mix by Month.xlsx.")
+    st.caption("Real Thermo (80.6%) / Cut&Clash (19.4%) split from FileMaker data 2025-2026; "
+               "the S1/S2/S3 mix can change depending on market trend.")
     mix_pct = {}
     for cls, pc in cfg.PRODUCT_CLASSES.items():
         seed(f"mix_{cls}", float(round(cfg.DEFAULT_MIX_PCT[cls], 2)))
@@ -377,6 +368,7 @@ with tab_floor:
     st.subheader("Move people around the floor")
     st.caption("Each box is a station; each chip is a person on that shift. **Drag** a chip onto "
                "another station to change their home station, or into the other lane to change "
+               "**Ctr + Drag** to copy staff into another station within their skill set. Copied staff is a shared resource. "
                "their shift. Then **Run** to see what it does to lead time and DIFOT. Changes stay "
                "in this session until you save the roster on the Staff & Skills tab.")
 
@@ -660,7 +652,7 @@ with tab_results:
         st.divider()
         label("Theory of Constraints", teal=True)
         st.subheader("Constraints, bottlenecks and where to improve")
-        st.caption("Identify → Exploit → Subordinate → Elevate, per line, from this run. A **bottleneck** is busy "
+        st.caption("A **bottleneck** is busy "
                    "and backing up; a **CCR** is busy but keeping up (no slack); **external** means the floor "
                    "isn't the limit at this intake. Buffers are shown in hours of the receiving station's work. "
                    "This diagnoses - test a suggestion by dragging people on the Factory Floor and re-running.")
@@ -731,7 +723,7 @@ with tab_results:
 
                 st.markdown("**Where to improve, in order**")
                 for i, sg in enumerate(rc.suggestions, start=1):
-                    gain = f" — *est. +{sg.gain_m2_per_week:,.0f} m²/week*" if sg.gain_m2_per_week else ""
+                    gain = f" *est. +{sg.gain_m2_per_week:,.0f} m²/week*" if sg.gain_m2_per_week else ""
                     st.markdown(f"{i}. **{sg.step}** · {sg.text}{gain}")
 
         st.markdown("**Staff utilisation by station** (labour % = productive share of staffed hours)")
@@ -857,4 +849,4 @@ with tab_results:
             with st.expander("Raw attendance log (per operator, per day)"):
                 st.dataframe(att_df, width="stretch")
 
-brand_footer(f"{len(roster.operators)} staff on roster · see CALIBRATION_NOTES.md for what is real vs assumed")
+brand_footer(f"{len(roster.operators)} staff on roster · see resources/CALIBRATION_NOTES.md for what is real vs assumed")
