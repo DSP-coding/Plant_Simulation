@@ -681,9 +681,10 @@ with tab_results:
         st.divider()
         label("Theory of Constraints", teal=True)
         st.subheader("Constraints, bottlenecks and where to improve")
-        st.caption("A **bottleneck** is busy "
-                   "and backing up; a **CCR** is busy but keeping up (no slack); **external** means the floor "
-                   "isn't the limit at this intake. Buffers are shown in hours of the receiving station's work. "
+        st.caption("A **bottleneck** is backing up - work piling in front of it; a **CCR** is busy but keeping "
+                   "up (no slack); **external** means no station on that line is at its limit at this intake "
+                   "(the busiest one is still named, as the one that would go first). "
+                   "Buffers are shown in hours of the receiving station's work. "
                    "This diagnoses - test a suggestion by dragging people on the Factory Floor and re-running.")
         report = analyse_constraints(result, roster)
         toc_cols = st.columns(2)
@@ -693,14 +694,20 @@ with tab_results:
                 st.markdown(f"### {rc.label}")
                 c = rc.constraint
                 k1, k2 = st.columns(2)
-                k1.metric("Constraint", short_station_label(c.station) if c else "None on the floor",
+                k1.metric("Constraint", short_station_label(c.station) if c else "None at its limit",
                           kind_word[rc.kind], delta_color="off")
                 if c:
                     k2.metric("Utilisation", f"{c.utilisation * 100:.0f}%",
                               f"queue {c.queue_start_m2:,.0f} → {c.queue_end_m2:,.0f} m²", delta_color="off")
-                elif rc.next_constraint:
-                    k2.metric("Busiest station", short_station_label(rc.next_constraint.station),
-                              f"{rc.next_constraint.utilisation * 100:.0f}% utilised", delta_color="off")
+                elif rc.nearest:
+                    # Nothing is binding - still name the station that would go
+                    # first, because "no constraint" on its own tells you nothing.
+                    k2.metric("Closest to constraining", short_station_label(rc.nearest.station),
+                              f"{rc.nearest.utilisation * 100:.0f}% utilised", delta_color="off")
+                if not c and rc.nearest:
+                    st.caption(f"No station on this line is at its limit at this intake. **{rc.nearest.label}** "
+                               f"is the most loaded ({rc.nearest.utilisation * 100:.0f}%) and would constrain "
+                               "the line first if volume rose.")
                 if rc.next_constraint and c:
                     st.caption(f"Next in line: **{rc.next_constraint.label}** "
                                f"({rc.next_constraint.utilisation * 100:.0f}%, "

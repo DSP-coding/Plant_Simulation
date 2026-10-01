@@ -36,6 +36,13 @@ from plant_sim.simulation import ROUTE_LABELS, SimulationResult
 # A station is treated as an active constraint when it is this busy while
 # staffed AND its queue is not shrinking. [ANALYSIS THRESHOLD, not a plant fact]
 CONSTRAINT_UTILISATION = 0.85
+# ...but a station whose queue is genuinely BUILDING is constraining the line
+# whatever the percentage says, so it only has to clear this lower bar. A
+# single hard 85% cut-off used to report "no constraint, demand is below
+# capacity" for a line whose glue-line queue was growing all month, purely
+# because it averaged 81% - the evidence of work piling up beats the
+# threshold. [ANALYSIS THRESHOLD, not a plant fact]
+GROWING_CONSTRAINT_UTILISATION = 0.60
 # A queue whose end level is this much above its start is "growing".
 GROWING_QUEUE_RATIO = 1.10
 # Buffer in front of the constraint below this many hours of its own work
@@ -70,8 +77,13 @@ class StationRow:
 
     @property
     def is_bottleneck(self) -> bool:
-        """Busy AND backing up - the classic constraint."""
-        return self.utilisation >= CONSTRAINT_UTILISATION and self.growing
+        """Busy AND backing up - the classic constraint. Work piling up in
+        front of a station that is busy most of the time IS the constraint,
+        so a growing queue qualifies at a lower utilisation than an idle-ish
+        station with a flat queue would need."""
+        if not self.growing:
+            return False
+        return self.utilisation >= min(CONSTRAINT_UTILISATION, GROWING_CONSTRAINT_UTILISATION)
 
     @property
     def is_ccr(self) -> bool:
@@ -119,6 +131,9 @@ class RouteConstraints:
     buffer_notes: list[str]
     protective_buffers: list[ProtectiveBuffer]
     suggestions: list[Suggestion]
+    # The most-loaded station on this line, named even when `external` - the
+    # one that would constrain first if demand rose.
+    nearest: StationRow | None = None
 
 
 @dataclass
@@ -176,11 +191,18 @@ def analyse(result: SimulationResult, roster=None) -> ConstraintsReport:
         elif ccrs:
             constraint, kind = ccrs[0], "ccr"
         else:
+            # Genuinely nothing binding: demand is below capacity everywhere.
+            # Still name the busiest station, because "this line has no
+            # constraint" is never a useful read-out - the honest statement is
+            # "nothing is at its limit; this is the one that would go first".
             constraint, kind = None, "external"
         next_c = next((r for r in ranked if r is not constraint), None)
+        # The station closest to becoming the constraint, named even when
+        # nothing is binding yet (see the "external" branch above).
+        nearest = ranked[0] if ranked else None
         by_route[route] = RouteConstraints(
             route=route, label=label, rows=rows, constraint=constraint, next_constraint=next_c,
-            kind=kind, external=constraint is None,
+            kind=kind, external=constraint is None, nearest=nearest,
             policy_constraints=_policy_constraints(route, rows, result),
             buffer_notes=_buffer_notes(rows, constraint, seq, set(s.buffer_targets_m2)),
             protective_buffers=_protective_buffers(route, result),

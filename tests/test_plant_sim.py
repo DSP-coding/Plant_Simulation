@@ -822,6 +822,43 @@ class SettingsMigrationTests(unittest.TestCase):
         self.assertAlmostEqual(r.cum_intake_m2, old_total, places=4)
 
 
+class ConstraintDetectionTests(unittest.TestCase):
+    """A station whose queue is building is the constraint, whatever the
+    utilisation percentage says - and a line is never reported as simply
+    having no constraint without naming the station closest to being one."""
+
+    def _row(self, util, growing):
+        from plant_sim.constraints import StationRow
+        return StationRow(station="edging", label="Cefla", shared=False, utilisation=util,
+                           labour_utilisation=util, running_h=100.0, staffed_h=100.0,
+                           unstaffed_h=0.0, starved_h=0.0, blocked_h=0.0, flat_out_h=0.0, held_h=0.0,
+                           queue_start_m2=10.0, queue_end_m2=100.0 if growing else 10.0,
+                           queue_avg_m2=50.0, queue_max_m2=100.0, capacity_m2_per_h=10.0,
+                           buffer_avg_h=5.0, buffer_end_h=5.0, headroom_m2_per_week=0.0,
+                           growing=growing)
+
+    def test_a_growing_queue_counts_below_the_85_percent_bar(self):
+        from plant_sim import constraints as con
+        self.assertTrue(self._row(0.81, True).is_bottleneck)      # the Cefla case
+        self.assertTrue(self._row(con.GROWING_CONSTRAINT_UTILISATION, True).is_bottleneck)
+        self.assertFalse(self._row(0.50, True).is_bottleneck)     # idle-ish, growth is noise
+        self.assertFalse(self._row(0.95, False).is_bottleneck)    # busy but keeping up
+        self.assertTrue(self._row(0.95, False).is_ccr)
+
+    def test_a_line_with_nothing_binding_still_names_the_busiest_station(self):
+        ops = [Operator(f"{sid}_{sh}", sid, sid, shift=sh) for sid in cfg.FLOW_STATIONS
+               for sh in cfg.SHIFT_LABELS]
+        # tiny intake: nothing should be anywhere near its limit
+        r = Simulator(Roster(ops), settings(horizon="week",
+                                            intake_m2_by_route={cfg.Route.THERMO: 50.0,
+                                                                cfg.Route.CUT_AND_CLASH: 10.0})).run()
+        rep = analyse(r)
+        for rc in rep.by_route.values():
+            if rc.external:
+                self.assertIsNotNone(rc.nearest, rc.label)
+                self.assertIn(rc.nearest, rc.rows)
+
+
 class PackingCoverTests(unittest.TestCase):
     """Packing is hands: a packer away is capacity gone until someone with
     packing skills comes across from another station to replace them."""

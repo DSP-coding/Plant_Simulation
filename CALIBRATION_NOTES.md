@@ -612,6 +612,37 @@ day packing bench gone - utilisation 49% -> 83%, average queue 44 ->
 184 m2. Completion barely moves because packing has headroom at 7,184
 m2/month; at 13,000 it would not.
 
+## Session 9b - a growing queue IS a constraint (2 Oct 2026)
+
+Keeping packing staffed (session 9) moved ~1.4 people back into Packing /
+Despatch, which dropped it from 67% to 47% utilised - and with it, the
+Thermo line reported **no constraint at all**: "external, demand is below
+capacity". That was wrong, and the fault was in the analysis, not the
+allocator. The Cefla was running at 81.4% with its queue building all
+month, but a single hard `CONSTRAINT_UTILISATION = 0.85` threw it out on
+a technicality.
+
+- `StationRow.is_bottleneck` now asks "is the queue growing?" first. A
+  station that is backing up qualifies from
+  `GROWING_CONSTRAINT_UTILISATION = 0.60` rather than 0.85 - work piling
+  up in front of a station that is busy most of the time IS the
+  constraint, whatever the percentage. Above 0.60 but flat is still a
+  CCR; growth at 50% utilisation is still treated as noise.
+- `RouteConstraints.nearest` always names the most-loaded station, so a
+  line with genuinely nothing binding reads "no station is at its limit;
+  X is the most loaded and would go first" instead of "None".
+
+With the real roster and current settings, Thermo now reads **Cefla,
+bottleneck, 81%, queue growing** - which is what the floor has said all
+along (open question 0g). Cut & Clash reads Edge bander, CCR, 87%.
+
+Worth noting what session 9 revealed in passing: before it, the allocator
+was lending ~1.4 packers per shift to other stations, which also cost
+Nathan Raika's split onto the Cefla (a moved person is a whole person
+elsewhere, so the split is dropped). Keeping him at packing gave the
+Cefla back ~0.4 of a person - part of why its utilisation fell from 87%
+to 81% even as it became the named constraint.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working
@@ -635,7 +666,12 @@ m2/month; at 13,000 it would not.
 0b. ~~Cut & Clash DIFOT is 43%~~ **Resolved (session 4)** by the real
    roster: with Nirmal on 1536 days, Cut & Clash runs at 100% DIFOT and
    3.5-day lead time.
-0g. **Why does the floor see the Cefla as a bottleneck?** In the model it
+0g. ~~Why does the floor see the Cefla as a bottleneck?~~ **Largely
+   resolved (session 9b)**: with real staffing and absence the Cefla runs
+   81% with a building queue, and is now correctly named the Thermo
+   constraint. A real Cefla m2-per-shift figure would still sharpen it.
+   Original note:
+   **Why does the floor see the Cefla as a bottleneck?** In the model it
    runs at ~69% (9,000 m²/month capacity vs ~5,900 of Thermo intake) and
    never backs up. Either its real throughput is lower than 9,000 (glue
    changeovers, downtime, one-person running?), or CNC/sanding output
