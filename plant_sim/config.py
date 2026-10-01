@@ -774,7 +774,24 @@ ALLOCATION_MAX_REBALANCE_MOVES = 6
 # station NOT on it can lend a person even if that leaves it short (but
 # never empty).
 ALLOCATION_COVER_PRIORITY = ("cnc_thermo", "edging", "press_1", "press_2", "sanding",
-                             "mb_sander", "cnc_1536", "edge_bander", "drilling", "optimising")
+                             "mb_sander", "cnc_1536", "edge_bander", "drilling", "optimising",
+                             # Packing / Despatch is here so its own people are
+                             # not lent away while it is short - every pair of
+                             # hands there is throughput. Hafele and DIY box
+                             # packing are deliberately NOT: boxes can wait a
+                             # shift, the glue line and the presses can't.
+                             "despatch")
+
+# [REAL, per the plant] Packing is purely people-driven: every pair of hands
+# is throughput, so one packer away is one packer's worth of capacity gone,
+# and the floor covers it by pulling in someone from another station who can
+# pack. These stations therefore get covered back up to their NORMAL ROSTERED
+# CREW for the shift, not to a fixed ideal_ops - if five people normally pack
+# on days and one is sick, the allocator looks for one packing-skilled person
+# to replace them, rather than shrugging because some constant says three.
+# (Everywhere else the target stays ideal_ops: a second person on the edge
+# bander doesn't make the machine run faster.)
+PEOPLE_DRIVEN_STATIONS: tuple[str, ...] = ("despatch", "hafele", "diy")
 
 
 # Which Thermo CNC is the "special" machine. [REAL, per the plant] C6 is

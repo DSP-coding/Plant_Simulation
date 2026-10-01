@@ -20,6 +20,10 @@ optimiser, so you can follow (and tweak) the logic by eye:
               people to spare; a non-priority station will lend even if it
               drops below its own ideal, a priority station won't. Nobody is
               ever moved somewhere they aren't skilled for.
+              Packing (cfg.PEOPLE_DRIVEN_STATIONS) is covered back up to the
+              people NORMALLY ROSTERED there this shift rather than to
+              ideal_ops, because its output is just hands: one packer away is
+              one packer's worth of capacity gone until someone replaces them.
     Pass 4 - Rebalancing: if some station is still drowning in backlog after
               that, pull a limited number of multi-skilled people off
               comfortably-staffed stations to go help, mirroring what a real
@@ -49,6 +53,7 @@ def allocate_shift(
     operators: list[Operator],
     active_stations: set[str],
     queue_m2: dict[str, float],
+    crew_target: dict[str, int] | None = None,
 ) -> dict[str, str | None]:
     """
     operators:       the people rostered to work THIS shift today (already
@@ -58,6 +63,11 @@ def allocate_shift(
     queue_m2:        current backlog (m2 waiting) in front of each STATION
                       (the two presses both report the shared press pile),
                       used purely to decide who needs help most
+    crew_target:     how many people NORMALLY work each station on this shift,
+                      absences included (i.e. counted off the roster, not off
+                      who turned up). Used as the cover target for the
+                      people-driven stations - see cfg.PEOPLE_DRIVEN_STATIONS.
+                      Omitted, every station just targets its ideal_ops.
     """
     assignment: dict[str, str | None] = {}
     by_id = {op.id: op for op in operators}
@@ -80,7 +90,7 @@ def allocate_shift(
 
     # --- Pass 3: cover stations that are short of their normal crew ---------
     already_moved: set[str] = set()
-    _cover_gaps(active_stations, by_id, assignment, already_moved)
+    _cover_gaps(active_stations, by_id, assignment, already_moved, crew_target or {})
 
     # --- Pass 4: rebalance floaters toward the most backed-up station --------
     for _ in range(ALLOCATION_MAX_REBALANCE_MOVES):
@@ -130,16 +140,31 @@ def _has_room(station: str, assignment: dict[str, str | None]) -> bool:
     return cap is None or _heads_on_station(station, assignment) < cap
 
 
+def _cover_target(station: str, crew_target: dict[str, int]) -> int:
+    """How many people this station should be brought back up to.
+
+    Normally its ideal crew. For the people-driven stations (packing) it is
+    however many normally work there on this shift, because their output is
+    hands rather than a machine rate - so an absence there is a real capacity
+    loss that someone has to replace. Never below ideal_ops: a thin roster
+    still gets flagged as a gap rather than quietly accepted."""
+    ideal = cfg.STATIONS[station].ideal_ops
+    if station in cfg.PEOPLE_DRIVEN_STATIONS:
+        return max(ideal, crew_target.get(station, 0))
+    return ideal
+
+
 def _cover_gaps(active_stations: set[str], by_id: dict[str, Operator],
-                assignment: dict[str, str | None], already_moved: set[str]) -> None:
-    """Fill stations that are below their ideal crew, most important first.
+                assignment: dict[str, str | None], already_moved: set[str],
+                crew_target: dict[str, int]) -> None:
+    """Fill stations that are below their normal crew, most important first.
     Mutates `assignment` and `already_moved` in place."""
     priority = [s for s in ALLOCATION_COVER_PRIORITY if s in active_stations]
     others = sorted(s for s in active_stations if s not in ALLOCATION_COVER_PRIORITY)
     for gap in priority + others:
-        ideal = cfg.STATIONS[gap].ideal_ops
+        ideal = _cover_target(gap, crew_target)
         while _heads_on_station(gap, assignment) < ideal and _has_room(gap, assignment):
-            donor = _find_cover_donor(gap, by_id, assignment, already_moved)
+            donor = _find_cover_donor(gap, by_id, assignment, already_moved, crew_target)
             if donor is None:
                 break
             assignment[donor] = gap
@@ -147,7 +172,7 @@ def _cover_gaps(active_stations: set[str], by_id: dict[str, Operator],
 
 
 def _find_cover_donor(gap: str, by_id: dict[str, Operator], assignment: dict[str, str | None],
-                      already_moved: set[str]) -> str | None:
+                      already_moved: set[str], crew_target: dict[str, int] | None = None) -> str | None:
     """The best person to move onto `gap`: qualified for it, not moved yet
     this shift, and taken from the station that can best spare them.
 
@@ -162,7 +187,7 @@ def _find_cover_donor(gap: str, by_id: dict[str, Operator], assignment: dict[str
         if gap not in by_id[op_id].all_qualified_stations:
             continue
         heads = _heads_on_station(station, assignment)
-        surplus = heads - cfg.STATIONS[station].ideal_ops
+        surplus = heads - _cover_target(station, crew_target or {})
         if heads <= 1:
             continue                                   # never empty a station
         if station in ALLOCATION_COVER_PRIORITY and surplus <= 0:

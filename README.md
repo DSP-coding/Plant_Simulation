@@ -151,6 +151,12 @@ questions in `CALIBRATION_NOTES.md`, not hidden inside a guessed number.
 - **Horizons**: day = one Monday, week = 7 days, month = 30 days. Every
   run is preceded by a 21-day warm-up so queues start at steady state;
   only the horizon is reported.
+- **Packing capacity is whoever is standing there.** Every pair of hands
+  at Packing / Despatch is throughput, so a packer off sick is that much
+  capacity gone until someone with packing skills is pulled across from
+  another station. The allocator covers packing back up to the people
+  *normally rostered* on that shift (not a fixed ideal), and won't lend
+  packers out while packing is short.
 - **Six crews, each on its own clock.** CNC, Sanding (manual + MB), Cefla,
   Press, Packing/Despatch and Cut & Clash each have their own days/week,
   shift lengths and **start time** relative to the 6am reference (CNC at

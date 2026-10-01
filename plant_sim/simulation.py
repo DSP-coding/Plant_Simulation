@@ -320,6 +320,7 @@ class Simulator:
         self.roster = roster
         self.settings = settings
         self.rng = random.Random(settings.random_seed)
+        self._crew_target_cache: dict[str, dict[str, int]] | None = None
 
     # -----------------------------------------------------------------
     # Main loop
@@ -515,7 +516,11 @@ class Simulator:
                     available_ops = [op for op in self.roster.operators
                                       if op.shift == label and op.id not in absent_d]
                     queue_snapshot = {sid: queues[cfg.queue_id_for(sid)].total_m2() for sid in cfg.STATIONS}
-                    assignment = allocate_shift(available_ops, active_for_label, queue_snapshot)
+                    # How many normally work each station on this shift, absences
+                    # included - the cover target for the people-driven stations,
+                    # so a packer who is away gets replaced rather than simply lost.
+                    assignment = allocate_shift(available_ops, active_for_label, queue_snapshot,
+                                                crew_target=self._crew_target(label))
                     allocation_cache[key] = assignment
                     rec_day = d - warmup_days
                     if 0 <= rec_day < total_days - warmup_days:
@@ -849,6 +854,19 @@ class Simulator:
             days[sid] = d
             labels[sid] = sched.shift_at(hod) if sched.active_on_weekday(d % 7) else None
         return labels, days
+
+    def _crew_target(self, shift_label: str) -> dict[str, int]:
+        """{station: how many people are ROSTERED there on this shift}, counted
+        off the roster and so unaffected by who is away today. The allocator
+        uses it to cover the people-driven stations back up to their normal
+        crew (see cfg.PEOPLE_DRIVEN_STATIONS)."""
+        if self._crew_target_cache is None:
+            cache: dict[str, dict[str, int]] = {label: {} for label in cfg.SHIFT_LABELS}
+            for op in self.roster.operators:
+                if op.shift in cache:
+                    cache[op.shift][op.home_station] = cache[op.shift].get(op.home_station, 0) + 1
+            self._crew_target_cache = cache
+        return self._crew_target_cache.get(shift_label, {})
 
     def _active_stations_for_shift(self, weekday: int, shift_label: str) -> set[str]:
         """Stations whose crew runs this shift label on this weekday."""

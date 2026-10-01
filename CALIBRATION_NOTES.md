@@ -568,6 +568,50 @@ matches the floor's own view that these two are a staffing problem, not a
 speed problem. Drilling still shows 162 of 324 running hours with work
 waiting and nobody on it, because Eric is days only.
 
+## Session 9 - packing absences actually cost packing capacity (2 Oct 2026)
+
+[REAL, per the plant] Packing is purely people-driven: one packer away is
+one packer's worth of capacity gone, and the floor covers it by pulling
+someone in from another station who can pack. The engine already scaled
+Packing / Despatch capacity with headcount (it is not machine-bound), but
+three things stopped that showing up:
+
+1. **The cover target was a stale constant.** `despatch.ideal_ops` is 3,
+   while five people are actually rostered on days - so one or two could
+   be away and the allocator saw no gap to fill. Cover now aims at the
+   people NORMALLY ROSTERED on that station for that shift, counted off
+   the roster so absence doesn't shrink the target
+   (`Simulator._crew_target` -> `allocate_shift(crew_target=...)` ->
+   `_cover_target`). It applies to `cfg.PEOPLE_DRIVEN_STATIONS`
+   (despatch, hafele, diy) only; everywhere else the target is still
+   ideal_ops, because a second person on the edge bander doesn't make the
+   machine run faster.
+2. **Packers were being lent away.** Dispatch wasn't in
+   `ALLOCATION_COVER_PRIORITY`, so a packing-skilled person (Prabh Singh)
+   was moved onto a CNC even with nobody absent - capacity leaking out of
+   packing while packing was short. Dispatch is now on that list, so it
+   keeps its crew and only lends people it has ABOVE the normal crew.
+   Hafele and DIY box packing are deliberately NOT protected: boxes can
+   wait a shift, the glue line and the presses can't.
+3. Absence at Hafele / DIY still has no m2 effect, because those two are
+   box-packed product lines outside the Thermo / Cut & Clash m2 flow
+   (unchanged, deliberate) - but they now get covered to their rostered
+   crew too.
+
+Effect on the real roster (day shift, 5 rostered on Dispatch):
+
+| | Dispatch heads | covered by |
+|---|---|---|
+| nobody away | 5 (was 4 - Prabh no longer lent to a CNC) | - |
+| 1 packer away | 5 | Ben Tasele from Hafele |
+| 3 packers away | 3 | nobody left free who can pack |
+
+...and over a median month the capacity follows the heads: 64.9 m2/h at
+full strength, 57.6 with one packer gone, 50.7 with three, 38.0 with the
+day packing bench gone - utilisation 49% -> 83%, average queue 44 ->
+184 m2. Completion barely moves because packing has headroom at 7,184
+m2/month; at 13,000 it would not.
+
 ## Open questions (need your input, not guessable from data)
 
 0. **Thermo is now *faster* than the real plant** (4.7 vs 8.66 working

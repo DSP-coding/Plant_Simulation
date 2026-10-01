@@ -291,8 +291,11 @@ class AllocationTests(unittest.TestCase):
 
     def test_cover_priority_order_cnc_before_sanding(self):
         # One spare multi-skilled person, gaps at both CNC and sanding: CNC wins.
+        # Dispatch is one over its ideal crew here, so it has someone to spare
+        # (at or below its crew it keeps its own people - see PackingCoverTests).
         ops = [Operator("c1", "C1", "cnc_thermo"), Operator("s1", "S1", "sanding"),
-               Operator("d1", "D1", "despatch", skills={"cnc_thermo", "sanding"}), Operator("d2", "D2", "despatch")]
+               Operator("d1", "D1", "despatch", skills={"cnc_thermo", "sanding"})]
+        ops += [Operator(f"d{i}", f"D{i}", "despatch") for i in range(2, 5)]
         a = allocate_shift(ops, {"cnc_thermo", "sanding", "despatch"}, {})
         self.assertEqual(a["d1"], "cnc_thermo")
 
@@ -817,6 +820,88 @@ class SettingsMigrationTests(unittest.TestCase):
         self.assertGreater(split[cfg.Route.THERMO], split[cfg.Route.CUT_AND_CLASH])
         r = Simulator(tiny_roster(), settings(horizon="month", intake_m2_by_route=split)).run()
         self.assertAlmostEqual(r.cum_intake_m2, old_total, places=4)
+
+
+class PackingCoverTests(unittest.TestCase):
+    """Packing is hands: a packer away is capacity gone until someone with
+    packing skills comes across from another station to replace them."""
+
+    def _packing_crew(self, n_despatch=5, n_press=5):
+        ops = [Operator(f"pk{i}", f"Packer {i}", "despatch") for i in range(n_despatch)]
+        # a press crew, some of whom can pack
+        ops += [Operator(f"pr{i}", f"Press {i}", "press_1",
+                         skills={"despatch"} if i < 3 else set()) for i in range(n_press)]
+        return ops
+
+    def test_an_absent_packer_is_replaced_from_another_station(self):
+        ops = self._packing_crew()
+        target = {"despatch": 5, "press_1": 5}
+        active = {"despatch", "press_1"}
+        full = allocate_shift(ops, active, {}, crew_target=target)
+        self.assertEqual(sum(1 for v in full.values() if v == "despatch"), 5)
+        # one packer off sick: someone from the press who can pack comes over
+        short = allocate_shift([o for o in ops if o.id != "pk0"], active, {}, crew_target=target)
+        self.assertEqual(sum(1 for v in short.values() if v == "despatch"), 5)
+        cover = [k for k, v in short.items() if v == "despatch" and k.startswith("pr")]
+        self.assertEqual(len(cover), 1)
+
+    def test_cover_stops_when_nobody_qualified_is_free(self):
+        # Only one press person can pack, and two packers are away: packing
+        # ends up one short rather than someone unskilled being dropped in.
+        ops = [Operator(f"pk{i}", f"Packer {i}", "despatch") for i in range(5)]
+        ops += [Operator(f"pr{i}", f"Press {i}", "press_1", skills={"despatch"} if i == 0 else set())
+                for i in range(5)]
+        a = allocate_shift([o for o in ops if o.id not in ("pk0", "pk1")], {"despatch", "press_1"}, {},
+                           crew_target={"despatch": 5, "press_1": 5})
+        self.assertEqual(sum(1 for v in a.values() if v == "despatch"), 4)
+        self.assertEqual(a["pr0"], "despatch")
+
+    def test_packers_are_not_lent_away_while_packing_is_at_or_below_crew(self):
+        # A CNC gap next door must not be filled by emptying the packing bench.
+        ops = [Operator(f"pk{i}", f"Packer {i}", "despatch", skills={"cnc_thermo"}) for i in range(5)]
+        ops += [Operator("c1", "C1", "cnc_thermo")]
+        a = allocate_shift(ops, {"despatch", "cnc_thermo"}, {}, crew_target={"despatch": 5})
+        self.assertEqual(sum(1 for v in a.values() if v == "despatch"), 5)
+        self.assertEqual(sum(1 for v in a.values() if v == "cnc_thermo"), 1)
+        # ...but a packer ABOVE the normal crew can still go and help
+        a2 = allocate_shift(ops, {"despatch", "cnc_thermo"}, {}, crew_target={"despatch": 4})
+        self.assertEqual(sum(1 for v in a2.values() if v == "cnc_thermo"), 2)
+
+    def test_packing_capacity_is_headcount_times_the_rate(self):
+        f = Simulator._flat_capacity_m2_per_hour
+        st = cfg.STATIONS["despatch"]
+        rate = st.capacity_m2_per_op_hour
+        self.assertEqual(f(st, 0, rate), 0.0)                     # nobody packing = nothing packed
+        self.assertAlmostEqual(f(st, 1, rate), rate)
+        self.assertAlmostEqual(f(st, 5, rate), 5 * rate)          # every pair of hands counts
+        self.assertIsNone(st.max_useful_ops)                      # so people are never turned away
+
+    def test_crew_target_is_counted_off_the_roster_not_off_attendance(self):
+        r = real_roster()
+        sim = Simulator(r, settings(horizon="day"))
+        for shift in cfg.SHIFT_LABELS:
+            target = sim._crew_target(shift)
+            for station in cfg.PEOPLE_DRIVEN_STATIONS:
+                rostered = sum(1 for o in r.operators if o.shift == shift and o.home_station == station)
+                self.assertEqual(target.get(station, 0), rostered, (shift, station))
+
+    def test_without_a_crew_target_the_old_ideal_ops_behaviour_stands(self):
+        ops = [Operator(f"pk{i}", f"Packer {i}", "despatch") for i in range(5)]
+        ops += [Operator("c1", "C1", "cnc_thermo")]
+        a = allocate_shift(ops, {"despatch", "cnc_thermo"}, {})   # no crew_target
+        self.assertEqual(sum(1 for v in a.values() if v == "despatch"), 5)
+
+    def test_losing_packers_lowers_packing_capacity_in_a_run(self):
+        full = real_roster()
+        fewer = Roster([o for o in full.operators if o.id not in ("63", "9004", "110")])
+        kw = dict(horizon="month", intake_m2_by_route={cfg.Route.THERMO: 5820.0,
+                                                       cfg.Route.CUT_AND_CLASH: 1364.0})
+        a = Simulator(full, settings(**kw)).run()
+        b = Simulator(fewer, settings(**kw)).run()
+        self.assertLess(b.station_capacity_m2_per_hour["despatch"],
+                        a.station_capacity_m2_per_hour["despatch"])
+        self.assertGreater(b.station_utilisation["despatch"], a.station_utilisation["despatch"])
+        self.assertGreater(b.station_queue_avg_m2["despatch"], a.station_queue_avg_m2["despatch"])
 
 
 class PeopleGatedStationTests(unittest.TestCase):
