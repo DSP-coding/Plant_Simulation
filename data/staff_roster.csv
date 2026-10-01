@@ -44,4 +44,4 @@ id,name,home_station,shift,skills,absence_rate_pct,machine,station_2,machine_2,n
 203,Diana Savage,optimising,day,cnc_thermo,3.8,,,,Optimising day
 9006,Ricky,optimising,day,,3.8,,,,Optimising day - NEW*
 67,Nathan Raika,despatch,day,admin;diy;edging;hafele,3.8,,edging,,Team Lead Day
-69,Sione Lolo,despatch,aft,admin;diy;hafele;optimising;press_1;press_2,3.8,,,,Team Lead Afternoon
+69,Sione Lolo,despatch,aft,admin;diy;hafele;optimising;press_1;press_2,3.8,,press_1,,Team Lead Afternoon
